@@ -1,0 +1,37 @@
+# Go
+backend/*.out
+backend/coverage.out
+backend/api
+backend/cmd/api/api
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.idea/
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/android/.gradle/
+mobile/android/captures/
+mobile/android/gradlew
+mobile/android/gradlew.bat
+mobile/android/local.properties
+mobile/android/**/GeneratedPluginRegistrant.java
+mobile/coverage/
+
+# Secrets / env
+.env
+*.pem
+*.key
+
+# Build artifacts stray at repo root (Xcode/CocoaPods tooling side effects)
+/build/
+
+# OS
+.DS_Store

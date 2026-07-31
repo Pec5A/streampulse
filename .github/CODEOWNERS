@@ -1,0 +1,38 @@
+# CODEOWNERS — review croisée obligatoire pour le RNCP
+#
+# Règle d'équipe (pas techniquement forcée par GitHub tant que le repo
+# reste privé sur un plan gratuit — voir docs/team/setup.md) :
+# un membre ne merge jamais sa propre PR, un des deux autres owners
+# du chemin touché doit review.
+
+# ---------- Fallback ----------
+*                                   @JASSBR @monkeyDkz @SamyNikaia
+
+# ---------- Yassir : identité & confiance ----------
+/backend/internal/**/auth/          @JASSBR @SamyNikaia
+/backend/internal/**/user/          @JASSBR @monkeyDkz
+/mobile/lib/features/auth/          @JASSBR @monkeyDkz
+
+# ---------- KaysZ : streaming & média ----------
+/backend/internal/**/stream/        @monkeyDkz @JASSBR
+/backend/internal/**/storage/       @monkeyDkz @SamyNikaia
+/mobile/lib/features/player/        @monkeyDkz @SamyNikaia
+/mobile/lib/features/broadcaster/   @monkeyDkz @JASSBR
+
+# ---------- SamyZ : contenu & plateforme ----------
+/backend/internal/**/playlist/      @SamyNikaia @monkeyDkz
+/backend/internal/**/admin/         @SamyNikaia @JASSBR
+/mobile/lib/features/playlists/     @SamyNikaia @JASSBR
+/mobile/lib/features/admin/         @SamyNikaia @monkeyDkz
+
+# ---------- CI / CD / infra ----------
+/.github/workflows/ci*.yml          @JASSBR @monkeyDkz @SamyNikaia
+/.github/workflows/cd*.yml          @monkeyDkz @JASSBR @SamyNikaia
+/deployments/                       @monkeyDkz @SamyNikaia
+/.github/CODEOWNERS                 @JASSBR
+
+# ---------- Documentation ----------
+/docs/team/                         @JASSBR
+/docs/adr/                          @JASSBR @monkeyDkz @SamyNikaia
+README.md                           @JASSBR
+CONTRIBUTORS.md                     @JASSBR
