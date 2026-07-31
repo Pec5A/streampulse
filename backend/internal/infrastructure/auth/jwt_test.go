@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const testSecret = "test-secret-at-least-32-bytes-long-ok"
+const testSecret = "test-secret-at-least-32-bytes-long-ok" // gitleaks:allow — test fixture, not a real secret
 
 func TestJWTManager_GenerateAndValidate(t *testing.T) {
 	m := NewJWTManager(testSecret, time.Hour)
@@ -53,8 +53,7 @@ func TestJWTManager_RejectsTokenSignedWithDifferentSecret(t *testing.T) {
 func TestJWTManager_RejectsNoneAlgToken(t *testing.T) {
 	m := NewJWTManager(testSecret, time.Hour)
 	// Hand-crafted "none" token (header.payload.signature, alg=none, empty sig).
-	// gitleaks:allow — not a real secret, a negative-test fixture.
-	noneToken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJ1c2VyX2lkIjoieCJ9."
+	noneToken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJ1c2VyX2lkIjoieCJ9." // gitleaks:allow — not a real secret, a negative-test fixture
 	if _, err := m.Validate(noneToken); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("Validate() on alg=none token error = %v, want ErrInvalidToken", err)
 	}
