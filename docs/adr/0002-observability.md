@@ -16,5 +16,5 @@ Le dashboard (`deployments/grafana/dashboards/streampulse-auth.json`) a des pane
 
 ## Conséquences
 - `/metrics` est exposé sans authentification pour l'instant (scraping local via docker-compose). À sécuriser si le service est un jour exposé publiquement (ticket S3).
-- Le docker-compose (api + postgres + prometheus + grafana) n'a pas pu être testé avec un vrai `docker compose up` dans cet environnement (pas de daemon Docker disponible) — vérifié uniquement pour la syntaxe YAML. À confirmer manuellement avant la démo.
+- Le docker-compose (api + postgres + prometheus + grafana) a été testé avec un vrai `docker compose up` (voir ADR 0004) : ça a révélé que les migrations SQL ne s'appliquaient jamais automatiquement, corrigé dans le même lot de travail. Sans ce test réel, ce bug serait resté invisible jusqu'à la démo.
 - Le fichier docker-compose sera probablement étendu par le ticket K3 (déploiement complet, K8s) — collaboration normale sur `deployments/`.
