@@ -24,6 +24,7 @@ groups:
             (invalid_credentials or error) exceeded 50% of total attempts
             for 2 minutes straight. Could be a credential-stuffing attempt,
             a broken mobile release, or the auth DB degrading.
+          runbook_url: "docs/runbooks/alert-auth-high-failure-rate.md"
 
       # Technical alert: same auth surface, but the SRE-facing signal
       # (5xx rate) rather than the product-facing one above.
@@ -44,6 +45,7 @@ groups:
             More than 5% of requests to /api/v1/auth/* returned a 5xx over
             the last 5 minutes. Likely a DB connectivity issue or a bad
             deploy — check `docker compose logs api`.
+          runbook_url: "docs/runbooks/alert-auth-high-error-rate.md"
 
       - alert: StreamPulseAuthHighLatency
         expr: |
@@ -60,3 +62,4 @@ groups:
             95th percentile latency on /api/v1/auth/* has been above 1s
             for 5 minutes — bcrypt cost, DB pool exhaustion, or noisy
             neighbor on the compose host are the usual suspects here.
+          runbook_url: "docs/runbooks/alert-auth-high-latency.md"
