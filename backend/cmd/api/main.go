@@ -47,9 +47,11 @@ func run() error {
 	hasher := auth.NewBcryptHasher()
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
+	userUC := usecase.NewUserUseCase(userRepo)
 
 	handlers := router.Handlers{
 		Auth: handler.NewAuthHandler(authUC),
+		User: handler.NewUserHandler(userUC),
 	}
 	mux := router.New(handlers, jwtManager)
 

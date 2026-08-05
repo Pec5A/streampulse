@@ -12,7 +12,7 @@ import (
 
 func TestRouter_HealthEndpoint(t *testing.T) {
 	jwtManager := auth.NewJWTManager("test-secret-at-least-32-bytes-long", time.Hour)
-	mux := New(Handlers{Auth: handler.NewAuthHandler(nil)}, jwtManager)
+	mux := New(Handlers{Auth: handler.NewAuthHandler(nil), User: handler.NewUserHandler(nil)}, jwtManager)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -28,7 +28,7 @@ func TestRouter_HealthEndpoint(t *testing.T) {
 
 func TestRouter_RefreshRequiresAuth(t *testing.T) {
 	jwtManager := auth.NewJWTManager("test-secret-at-least-32-bytes-long", time.Hour)
-	mux := New(Handlers{Auth: handler.NewAuthHandler(nil)}, jwtManager)
+	mux := New(Handlers{Auth: handler.NewAuthHandler(nil), User: handler.NewUserHandler(nil)}, jwtManager)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
 	rec := httptest.NewRecorder()
@@ -36,5 +36,27 @@ func TestRouter_RefreshRequiresAuth(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d (refresh must require auth)", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRouter_RGPDRoutesRequireAuth(t *testing.T) {
+	jwtManager := auth.NewJWTManager("test-secret-at-least-32-bytes-long", time.Hour)
+	mux := New(Handlers{Auth: handler.NewAuthHandler(nil), User: handler.NewUserHandler(nil)}, jwtManager)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/users/me"},
+		{http.MethodGet, "/api/v1/users/me/data"},
+		{http.MethodDelete, "/api/v1/users/me"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s: status = %d, want %d", tc.method, tc.path, rec.Code, http.StatusUnauthorized)
+		}
 	}
 }

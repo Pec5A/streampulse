@@ -13,10 +13,12 @@ import (
 
 type Handlers struct {
 	Auth *handler.AuthHandler
+	User *handler.UserHandler
 }
 
 func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	mux := http.NewServeMux()
+	requireAuth := middleware.RequireAuth(jwtManager)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -25,7 +27,11 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 
 	mux.HandleFunc("POST /api/v1/auth/register", h.Auth.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.Auth.Login)
-	mux.Handle("POST /api/v1/auth/refresh", middleware.RequireAuth(jwtManager)(http.HandlerFunc(h.Auth.Refresh)))
+	mux.Handle("POST /api/v1/auth/refresh", requireAuth(http.HandlerFunc(h.Auth.Refresh)))
+
+	mux.Handle("GET /api/v1/users/me", requireAuth(http.HandlerFunc(h.User.Me)))
+	mux.Handle("GET /api/v1/users/me/data", requireAuth(http.HandlerFunc(h.User.ExportData)))
+	mux.Handle("DELETE /api/v1/users/me", requireAuth(http.HandlerFunc(h.User.DeleteMe)))
 
 	return mux
 }
