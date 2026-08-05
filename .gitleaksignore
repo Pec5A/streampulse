@@ -1,0 +1,13 @@
+# Known false positives, reviewed and confirmed not real secrets.
+# One fingerprint per line (commit:file:rule:line), as reported by
+# `gitleaks detect --verbose`. The inline `gitleaks:allow` comment on these
+# same lines covers the current tree; this file covers the historical
+# commit that already has the flagged content (inline comments only apply
+# to the tree state at scan time, not past commits).
+
+# Test-only JWT signing secret (jwt_test.go) — not a real credential.
+44f6bc3c532f44e3ae348849a2dec0df6feb467f:backend/internal/infrastructure/auth/jwt_test.go:generic-api-key:9
+
+# Hand-crafted unsigned "alg=none" JWT used to test that jwt.Validate
+# rejects it — not a real signing secret.
+44f6bc3c532f44e3ae348849a2dec0df6feb467f:backend/internal/infrastructure/auth/jwt_test.go:jwt:57

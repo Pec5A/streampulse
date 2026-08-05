@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No `branches:` filter here on purpose: with stacked PRs (a ticket
+  # branching off another unmerged ticket's branch instead of main), a
+  # PR's base is often not `main` yet. Restricting to branches: [main]
+  # silently skipped CI on those PRs entirely (found while working on
+  # ticket Y3 — Y2 and Y3's PRs never ran CI because of this).
   pull_request:
-    branches: [main]
 
 jobs:
   backend-quality:
