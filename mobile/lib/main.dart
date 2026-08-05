@@ -10,6 +10,9 @@ import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/repository/auth_repository.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/auth/user_model.dart';
+import 'features/playlists/bloc/playlists_bloc.dart';
+import 'features/playlists/repositories/playlist_repository.dart';
+import 'features/playlists/screens/playlists_screen.dart';
 
 void main() {
   const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'http://localhost:8080');
@@ -17,10 +20,12 @@ void main() {
   final storage = SecureStorage();
   final authRepository = AuthRepository(apiClient: apiClient, storage: storage);
   final adminRepository = AdminRepository(apiClient: apiClient, storage: storage);
+  final playlistRepository = PlaylistRepository(apiClient: apiClient, storage: storage);
 
   runApp(StreamPulseApp(
     authRepository: authRepository,
     adminRepository: adminRepository,
+    playlistRepository: playlistRepository,
   ));
 }
 
@@ -29,15 +34,20 @@ class StreamPulseApp extends StatelessWidget {
     super.key,
     required this.authRepository,
     required this.adminRepository,
+    required this.playlistRepository,
   });
 
   final AuthRepository authRepository;
   final AdminRepository adminRepository;
+  final PlaylistRepository playlistRepository;
 
   @override
   Widget build(BuildContext context) {
-    return RepositoryProvider.value(
-      value: adminRepository,
+    return MultiRepositoryProvider(
+      providers: [
+        RepositoryProvider.value(value: adminRepository),
+        RepositoryProvider.value(value: playlistRepository),
+      ],
       child: BlocProvider(
         create: (_) => AuthBloc(repository: authRepository),
         child: MaterialApp(
@@ -69,7 +79,7 @@ ThemeData _appTheme() {
   );
 }
 
-/// Landing screen after login. Exposes the admin console to admins only.
+/// Landing screen after login: playlists for everyone, admin console for admins.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key, required this.user});
   final UserModel user;
@@ -83,8 +93,22 @@ class HomeScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Bienvenue, ${user.username}'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => BlocProvider(
+                    create: (ctx) =>
+                        PlaylistsBloc(repository: ctx.read<PlaylistRepository>())..add(const PlaylistsRequested()),
+                    child: const PlaylistsScreen(),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.queue_music),
+              label: const Text('Mes playlists'),
+            ),
             if (user.role == 'admin') ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
