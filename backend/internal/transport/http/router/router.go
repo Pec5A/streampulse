@@ -12,8 +12,9 @@ import (
 )
 
 type Handlers struct {
-	Auth  *handler.AuthHandler
-	Admin *handler.AdminHandler
+	Auth     *handler.AuthHandler
+	Admin    *handler.AdminHandler
+	Playlist *handler.PlaylistHandler
 }
 
 func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
@@ -37,6 +38,22 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 		mux.Handle("GET /api/v1/admin/stats", admin(h.Admin.Stats))
 		mux.Handle("GET /api/v1/admin/users", admin(h.Admin.ListUsers))
 		mux.Handle("PATCH /api/v1/admin/users/{id}/role", admin(h.Admin.UpdateRole))
+	}
+
+	// Playlists (ticket S1) — every route requires a valid JWT; the caller is
+	// the resource owner.
+	if h.Playlist != nil {
+		protected := func(fn http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(jwtManager)(fn)
+		}
+		mux.Handle("POST /api/v1/playlists", protected(h.Playlist.Create))
+		mux.Handle("GET /api/v1/playlists", protected(h.Playlist.List))
+		mux.Handle("GET /api/v1/playlists/{id}", protected(h.Playlist.Get))
+		mux.Handle("PATCH /api/v1/playlists/{id}", protected(h.Playlist.Update))
+		mux.Handle("DELETE /api/v1/playlists/{id}", protected(h.Playlist.Delete))
+		mux.Handle("POST /api/v1/playlists/{id}/tracks", protected(h.Playlist.AddTrack))
+		mux.Handle("DELETE /api/v1/playlists/{id}/tracks/{trackID}", protected(h.Playlist.RemoveTrack))
+		mux.Handle("PUT /api/v1/playlists/{id}/tracks/order", protected(h.Playlist.Reorder))
 	}
 
 	return mux
