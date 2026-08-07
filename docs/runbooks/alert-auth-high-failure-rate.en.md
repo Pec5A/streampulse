@@ -30,7 +30,7 @@ sum(rate(streampulse_auth_logins_total[5m]))
    sum by (result) (rate(streampulse_auth_logins_total[5m]))
    ```
    If `error` dominates → technical outage, see `alert-auth-high-error-rate.en.md`. If `invalid_credentials` dominates → suspected brute force or client bug.
-3. Check IP/account diversity if logs allow it (not instrumented yet in this repo — known limitation, see ADR 0004).
+3. Check IP/account diversity if logs allow it (not instrumented yet in this repo — known limitation, see ADR 0007).
 
 ## What to do
 - **If `error` dominates** → treat as a technical outage (see the error-rate runbook): `docker compose logs api`, check Postgres.

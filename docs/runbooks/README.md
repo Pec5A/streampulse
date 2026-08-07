@@ -1,6 +1,6 @@
 # Runbooks — StreamPulse
 
-> Périmètre actuel : les 3 alertes auth définies dans `deployments/prometheus/alerts.yml` (ADR 0004). Le ticket S3 (SamyZ) étendra ce dossier avec l'alerting système complet (Postgres, Redis, disque...) et l'Alertmanager qui route réellement ces alertes vers un humain — aujourd'hui elles ne sont visibles que dans l'UI Prometheus (`/alerts`), pas encore notifiées.
+> Périmètre actuel : les 3 alertes auth définies dans `deployments/prometheus/alerts.yml` (ADR 0007). Le ticket S3 (SamyZ) étendra ce dossier avec l'alerting système complet (Postgres, Redis, disque...) et l'Alertmanager qui route réellement ces alertes vers un humain — aujourd'hui elles ne sont visibles que dans l'UI Prometheus (`/alerts`), pas encore notifiées.
 
 ## Index
 

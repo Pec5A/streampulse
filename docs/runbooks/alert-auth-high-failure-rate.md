@@ -30,7 +30,7 @@ sum(rate(streampulse_auth_logins_total[5m]))
    sum by (result) (rate(streampulse_auth_logins_total[5m]))
    ```
    Si c'est `error` qui domine → panne technique, voir `alert-auth-high-error-rate.md`. Si c'est `invalid_credentials` → suspicion de brute force ou de bug client.
-3. Regarder la diversité des IP/comptes visés si les logs le permettent (pas encore instrumenté ici — limite connue, voir ADR 0004).
+3. Regarder la diversité des IP/comptes visés si les logs le permettent (pas encore instrumenté ici — limite connue, voir ADR 0007).
 
 ## Quoi faire
 - **Si `error` domine** → traiter comme une panne technique (voir le runbook error-rate) : `docker compose logs api`, vérifier Postgres.

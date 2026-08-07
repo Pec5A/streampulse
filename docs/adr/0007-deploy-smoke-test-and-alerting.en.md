@@ -1,4 +1,4 @@
-# 0004 — Deploy smoke test, auto-migrations, auth alerting (A3.4/A3.5)
+# 0007 — Deploy smoke test, auto-migrations, auth alerting (A3.4/A3.5)
 
 ## Status
 Accepted
@@ -27,7 +27,7 @@ Three rules in `deployments/prometheus/alerts.yml`, all limited to my scope (`/a
 Deliberately, no Alertmanager and no notification routing (email/Slack): that stays within ticket S3's scope (SamyZ), who will build system-wide alerting. These are Prometheus evaluation rules — visible under `/alerts`, consumable by whatever Alertmanager gets wired up later, without depending on S3's implementation to exist.
 
 ## A bug found by checking, not by assuming
-The alert rules initially used `path=~"/api/v1/auth.*"`. Testing against the real stack (`docker compose up` plus real requests) showed that the technical middleware's `path` label (ADR 0002) is actually `"POST /api/v1/auth/login"` — the HTTP method is prefixed into the label value, not just carried separately in the `method` label. The original regex therefore never matched anything. Fixed to `path=~".*/api/v1/auth/.*"`, re-verified against Prometheus (`/api/v1/rules`, `health: "ok"`, non-empty series). Without actually running the stack, this rule would have stayed "present in the file" but silently inert — invisible from just reading the YAML.
+The alert rules initially used `path=~"/api/v1/auth.*"`. Testing against the real stack (`docker compose up` plus real requests) showed that the technical middleware's `path` label (ADR 0005) is actually `"POST /api/v1/auth/login"` — the HTTP method is prefixed into the label value, not just carried separately in the `method` label. The original regex therefore never matched anything. Fixed to `path=~".*/api/v1/auth/.*"`, re-verified against Prometheus (`/api/v1/rules`, `health: "ok"`, non-empty series). Without actually running the stack, this rule would have stayed "present in the file" but silently inert — invisible from just reading the YAML.
 
 ## Consequences
 - The `deploy-smoke-test` job adds roughly 1–2 minutes to the CI pipeline; judged acceptable given what it already caught once.

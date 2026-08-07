@@ -1,4 +1,4 @@
-# 0002 — Observabilité : séparer métier et technique (ticket Y3)
+# 0005 — Observabilité : séparer métier et technique (ticket Y3)
 
 ## Statut
 Accepté
@@ -16,5 +16,5 @@ Le dashboard (`deployments/grafana/dashboards/streampulse-auth.json`) a des pane
 
 ## Conséquences
 - `/metrics` est exposé sans authentification pour l'instant (scraping local via docker-compose). À sécuriser si le service est un jour exposé publiquement (ticket S3).
-- Le docker-compose (api + postgres + prometheus + grafana) a été testé avec un vrai `docker compose up` (voir ADR 0004) : ça a révélé que les migrations SQL ne s'appliquaient jamais automatiquement, corrigé dans le même lot de travail. Sans ce test réel, ce bug serait resté invisible jusqu'à la démo.
+- Le docker-compose (api + postgres + prometheus + grafana) a été testé avec un vrai `docker compose up` (voir ADR 0007) : ça a révélé que les migrations SQL ne s'appliquaient jamais automatiquement, corrigé dans le même lot de travail. Sans ce test réel, ce bug serait resté invisible jusqu'à la démo.
 - Le fichier docker-compose sera probablement étendu par le ticket K3 (déploiement complet, K8s) — collaboration normale sur `deployments/`.

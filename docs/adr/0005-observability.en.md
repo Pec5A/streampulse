@@ -1,4 +1,4 @@
-# 0002 — Observability: separating business and technical metrics (ticket Y3)
+# 0005 — Observability: separating business and technical metrics (ticket Y3)
 
 ## Status
 Accepted
@@ -16,5 +16,5 @@ The dashboard (`deployments/grafana/dashboards/streampulse-auth.json`) has separ
 
 ## Consequences
 - `/metrics` is exposed without authentication for now (local scraping via docker-compose). Needs securing if the service is ever exposed publicly (ticket S3).
-- The docker-compose stack (api + postgres + prometheus + grafana) has since been exercised with a real `docker compose up` (see ADR 0004): that run revealed the SQL migrations were never applied automatically, fixed in the same batch of work. Without that real test, this bug would have stayed invisible until the demo.
+- The docker-compose stack (api + postgres + prometheus + grafana) has since been exercised with a real `docker compose up` (see ADR 0007): that run revealed the SQL migrations were never applied automatically, fixed in the same batch of work. Without that real test, this bug would have stayed invisible until the demo.
 - The docker-compose file will likely be extended by ticket K3 (full deployment, K8s) — expected collaboration on `deployments/`.

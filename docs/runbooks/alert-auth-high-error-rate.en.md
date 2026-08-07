@@ -3,7 +3,7 @@
 **Severity**: critical · **Domain**: technical · **Rule**: `deployments/prometheus/alerts.yml`
 
 ## What it is
-More than 5% of requests to `/api/v1/auth/*` returned a 5xx status over a 5-minute window, for at least 2 minutes straight. Unlike the business alert (login failures), this one only looks at **HTTP status codes** via the technical middleware (`middleware.Metrics`, see ADR 0002) — it fires even if nobody is trying bad passwords, purely because the server is failing.
+More than 5% of requests to `/api/v1/auth/*` returned a 5xx status over a 5-minute window, for at least 2 minutes straight. Unlike the business alert (login failures), this one only looks at **HTTP status codes** via the technical middleware (`middleware.Metrics`, see ADR 0005) — it fires even if nobody is trying bad passwords, purely because the server is failing.
 
 Exact query:
 ```promql
@@ -14,7 +14,7 @@ sum(rate(streampulse_http_requests_total{path=~".*/api/v1/auth/.*"}[5m]))
 ```
 
 ## Possible causes
-1. **Postgres down or unreachable** — this is exactly the bug found while building ADR 0004: without migrations, every real request 500'd. A similar issue (DB down, exhausted pool, wrong `DATABASE_URL`) reproduces the same symptom.
+1. **Postgres down or unreachable** — this is exactly the bug found while building ADR 0007: without migrations, every real request 500'd. A similar issue (DB down, exhausted pool, wrong `DATABASE_URL`) reproduces the same symptom.
 2. **Migrations not applied** — see `persistence.Migrate` in `main.go`; if it fails at startup the API doesn't even start (fatal), so that specific case would look more like a total absence of traffic. But a future badly-written migration could leave the schema in a broken intermediate state.
 3. **A bug introduced by a future commit** to `AuthUseCase`/`UserRepository`.
 4. **Exhausted DB connection pool** under load (`db.SetMaxOpenConns(10)` in `persistence.Open` — 10 connections max, a traffic spike alone can saturate it).

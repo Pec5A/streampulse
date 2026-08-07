@@ -5,7 +5,7 @@ groups:
       # errors — a spike of invalid_credentials can mean credential
       # stuffing/brute force just as much as a broken client release.
       # Kept separate from the technical alert below on purpose, same
-      # split rationale as the Grafana dashboard (docs/adr/0002).
+      # split rationale as the Grafana dashboard (docs/adr/0005).
       - alert: StreamPulseAuthHighFailureRate
         expr: |
           (

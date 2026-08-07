@@ -1,6 +1,6 @@
 # Runbooks — StreamPulse
 
-> Current scope: the 3 auth alerts defined in `deployments/prometheus/alerts.yml` (ADR 0004). Ticket S3 (SamyZ) will extend this folder with full system-wide alerting (Postgres, Redis, disk...) and the Alertmanager that actually routes these alerts to a human — today they're only visible in the Prometheus UI (`/alerts`), not yet notified.
+> Current scope: the 3 auth alerts defined in `deployments/prometheus/alerts.yml` (ADR 0007). Ticket S3 (SamyZ) will extend this folder with full system-wide alerting (Postgres, Redis, disk...) and the Alertmanager that actually routes these alerts to a human — today they're only visible in the Prometheus UI (`/alerts`), not yet notified.
 
 ## Index
 

@@ -1,4 +1,4 @@
-# 0004 — Smoke test de déploiement, auto-migrations, alertes auth (A3.4/A3.5)
+# 0007 — Smoke test de déploiement, auto-migrations, alertes auth (A3.4/A3.5)
 
 ## Statut
 Accepté
@@ -27,7 +27,7 @@ Trois règles dans `deployments/prometheus/alerts.yml`, toutes limitées à mon 
 Volontairement, pas d'Alertmanager ni de routing de notifications (email/Slack) : ça reste le périmètre du ticket S3 (SamyZ), qui construira l'alerting transverse à tout le système. Ici, ce sont des règles d'évaluation Prometheus — visibles dans `/alerts`, exploitables par n'importe quel Alertmanager branché dessus plus tard, sans dépendre de l'implémentation de S3 pour exister.
 
 ## Un bug trouvé en vérifiant, pas en supposant
-Les règles d'alerte utilisaient d'abord `path=~"/api/v1/auth.*"`. En testant contre le stack réel (`docker compose up` + requêtes réelles), le label `path` du middleware technique (ADR 0002) s'est révélé être `"POST /api/v1/auth/login"` — la méthode HTTP est préfixée dans la valeur du label, pas juste dans le label `method` séparé. Le premier regex ne matchait donc jamais rien. Corrigé en `path=~".*/api/v1/auth/.*"`, revérifié contre Prometheus (`/api/v1/rules`, `health: "ok"`, séries non vides). Sans exécution réelle du stack, cette règle serait restée "présente dans le fichier" mais silencieusement inopérante — invisible à la simple lecture du YAML.
+Les règles d'alerte utilisaient d'abord `path=~"/api/v1/auth.*"`. En testant contre le stack réel (`docker compose up` + requêtes réelles), le label `path` du middleware technique (ADR 0005) s'est révélé être `"POST /api/v1/auth/login"` — la méthode HTTP est préfixée dans la valeur du label, pas juste dans le label `method` séparé. Le premier regex ne matchait donc jamais rien. Corrigé en `path=~".*/api/v1/auth/.*"`, revérifié contre Prometheus (`/api/v1/rules`, `health: "ok"`, séries non vides). Sans exécution réelle du stack, cette règle serait restée "présente dans le fichier" mais silencieusement inopérante — invisible à la simple lecture du YAML.
 
 ## Conséquences
 - Le job `deploy-smoke-test` ajoute ~1-2 minutes au pipeline CI ; jugé acceptable vu ce qu'il a déjà attrapé une fois.

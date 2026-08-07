@@ -3,7 +3,7 @@
 **Sévérité** : critical · **Domaine** : technique · **Règle** : `deployments/prometheus/alerts.yml`
 
 ## C'est quoi
-Plus de 5% des requêtes vers `/api/v1/auth/*` ont renvoyé un code 5xx sur une fenêtre de 5 minutes, pendant au moins 2 minutes d'affilée. Contrairement à l'alerte métier (échecs de connexion), celle-ci ne regarde que les **codes HTTP** via le middleware technique (`middleware.Metrics`, voir ADR 0002) — elle se déclenche même si personne n'essaie de se connecter avec un mauvais mot de passe, juste parce que le serveur plante.
+Plus de 5% des requêtes vers `/api/v1/auth/*` ont renvoyé un code 5xx sur une fenêtre de 5 minutes, pendant au moins 2 minutes d'affilée. Contrairement à l'alerte métier (échecs de connexion), celle-ci ne regarde que les **codes HTTP** via le middleware technique (`middleware.Metrics`, voir ADR 0005) — elle se déclenche même si personne n'essaie de se connecter avec un mauvais mot de passe, juste parce que le serveur plante.
 
 Requête exacte :
 ```promql
@@ -14,7 +14,7 @@ sum(rate(streampulse_http_requests_total{path=~".*/api/v1/auth/.*"}[5m]))
 ```
 
 ## Causes possibles
-1. **Postgres down ou inaccessible** — c'est exactement le bug trouvé pendant le travail sur ADR 0004 : sans les migrations, chaque appel réel plantait en 500. Un problème similaire (DB down, pool épuisé, mauvaise `DATABASE_URL`) redonnerait ce symptôme.
+1. **Postgres down ou inaccessible** — c'est exactement le bug trouvé pendant le travail sur ADR 0007 : sans les migrations, chaque appel réel plantait en 500. Un problème similaire (DB down, pool épuisé, mauvaise `DATABASE_URL`) redonnerait ce symptôme.
 2. **Migrations non appliquées** — voir `persistence.Migrate` dans `main.go` ; si elle échoue au démarrage, l'API ne démarre même pas (fatal), donc ce cas précis serait plutôt une absence totale de trafic. Mais une migration future mal écrite pourrait laisser le schéma dans un état intermédiaire cassé.
 3. **Bug de code introduit par un futur commit** sur `AuthUseCase`/`UserRepository`.
 4. **Pool de connexions DB épuisé** sous forte charge (`db.SetMaxOpenConns(10)` dans `persistence.Open` — 10 connexions max, un pic de trafic peut suffire à saturer).
