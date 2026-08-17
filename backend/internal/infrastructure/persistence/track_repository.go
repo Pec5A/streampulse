@@ -26,7 +26,7 @@ func NewTrackRepository(db *sql.DB) *TrackRepository {
 
 var _ repository.TrackRepository = (*TrackRepository)(nil)
 
-func (r *TrackRepository) Create(ctx context.Context, t *entity.Track) error {
+func (r *TrackRepository) Create(ctx context.Context, t *entity.AudioTrack) error {
 	if t.ID == "" {
 		t.ID = uuid.NewString()
 	}
@@ -52,14 +52,14 @@ func (r *TrackRepository) Create(ctx context.Context, t *entity.Track) error {
 	return nil
 }
 
-func (r *TrackRepository) FindByID(ctx context.Context, id string) (*entity.Track, error) {
+func (r *TrackRepository) FindByID(ctx context.Context, id string) (*entity.AudioTrack, error) {
 	q := `SELECT ` + trackColumns + `
 		FROM tracks t LEFT JOIN users u ON u.id = t.uploader_id
 		WHERE t.id = $1`
 	return scanTrack(r.db.QueryRowContext(ctx, q, id))
 }
 
-func (r *TrackRepository) List(ctx context.Context, limit, offset int) ([]entity.Track, error) {
+func (r *TrackRepository) List(ctx context.Context, limit, offset int) ([]entity.AudioTrack, error) {
 	q := `SELECT ` + trackColumns + `
 		FROM tracks t LEFT JOIN users u ON u.id = t.uploader_id
 		ORDER BY t.created_at DESC
@@ -67,7 +67,7 @@ func (r *TrackRepository) List(ctx context.Context, limit, offset int) ([]entity
 	return r.query(ctx, q, limit, offset)
 }
 
-func (r *TrackRepository) ListByUploader(ctx context.Context, uploaderID string) ([]entity.Track, error) {
+func (r *TrackRepository) ListByUploader(ctx context.Context, uploaderID string) ([]entity.AudioTrack, error) {
 	q := `SELECT ` + trackColumns + `
 		FROM tracks t LEFT JOIN users u ON u.id = t.uploader_id
 		WHERE t.uploader_id = $1
@@ -83,16 +83,16 @@ func (r *TrackRepository) Delete(ctx context.Context, id string) error {
 	return checkRowsAffected(res)
 }
 
-func (r *TrackRepository) query(ctx context.Context, q string, args ...any) ([]entity.Track, error) {
+func (r *TrackRepository) query(ctx context.Context, q string, args ...any) ([]entity.AudioTrack, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query tracks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	tracks := make([]entity.Track, 0)
+	tracks := make([]entity.AudioTrack, 0)
 	for rows.Next() {
-		var t entity.Track
+		var t entity.AudioTrack
 		if err := rows.Scan(&t.ID, &t.Title, &t.Artist, &t.StorageKey, &t.Filename,
 			&t.ContentType, &t.SizeBytes, &t.UploaderID, &t.UploaderUsername,
 			&t.CreatedAt, &t.UpdatedAt); err != nil {
@@ -106,8 +106,8 @@ func (r *TrackRepository) query(ctx context.Context, q string, args ...any) ([]e
 	return tracks, nil
 }
 
-func scanTrack(row *sql.Row) (*entity.Track, error) {
-	var t entity.Track
+func scanTrack(row *sql.Row) (*entity.AudioTrack, error) {
+	var t entity.AudioTrack
 	err := row.Scan(&t.ID, &t.Title, &t.Artist, &t.StorageKey, &t.Filename,
 		&t.ContentType, &t.SizeBytes, &t.UploaderID, &t.UploaderUsername,
 		&t.CreatedAt, &t.UpdatedAt)

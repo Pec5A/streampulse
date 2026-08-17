@@ -14,6 +14,8 @@ type Config struct {
 	JWTSecret     string
 	JWTExpiration time.Duration
 	Environment   string
+	// StoragePath is where uploaded audio files are written (ticket K2).
+	StoragePath string
 }
 
 func Load() (*Config, error) {
@@ -23,6 +25,7 @@ func Load() (*Config, error) {
 		JWTSecret:     os.Getenv("JWT_SECRET"),
 		JWTExpiration: 24 * time.Hour,
 		Environment:   getEnv("ENVIRONMENT", "development"),
+		StoragePath:   getEnv("STORAGE_PATH", "./uploads"),
 	}
 
 	if cfg.DatabaseURL == "" {

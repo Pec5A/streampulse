@@ -9,9 +9,9 @@ import (
 // TrackRepository persists uploaded-track metadata. The bytes themselves
 // live behind the storage port, never in the database.
 type TrackRepository interface {
-	Create(ctx context.Context, track *entity.Track) error
-	FindByID(ctx context.Context, id string) (*entity.Track, error)
-	List(ctx context.Context, limit, offset int) ([]entity.Track, error)
-	ListByUploader(ctx context.Context, uploaderID string) ([]entity.Track, error)
+	Create(ctx context.Context, track *entity.AudioTrack) error
+	FindByID(ctx context.Context, id string) (*entity.AudioTrack, error)
+	List(ctx context.Context, limit, offset int) ([]entity.AudioTrack, error)
+	ListByUploader(ctx context.Context, uploaderID string) ([]entity.AudioTrack, error)
 	Delete(ctx context.Context, id string) error
 }
