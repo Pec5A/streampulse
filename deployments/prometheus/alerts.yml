@@ -1,0 +1,65 @@
+groups:
+  - name: streampulse-auth
+    rules:
+      # Business alert: fires on abnormal auth *outcomes*, not on server
+      # errors — a spike of invalid_credentials can mean credential
+      # stuffing/brute force just as much as a broken client release.
+      # Kept separate from the technical alert below on purpose, same
+      # split rationale as the Grafana dashboard (docs/adr/0005).
+      - alert: StreamPulseAuthHighFailureRate
+        expr: |
+          (
+            sum(rate(streampulse_auth_logins_total{result!="success"}[5m]))
+            /
+            sum(rate(streampulse_auth_logins_total[5m]))
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          domain: business
+        annotations:
+          summary: "More than 50% of login attempts are failing"
+          description: >-
+            Over the last 5 minutes, non-success login outcomes
+            (invalid_credentials or error) exceeded 50% of total attempts
+            for 2 minutes straight. Could be a credential-stuffing attempt,
+            a broken mobile release, or the auth DB degrading.
+          runbook_url: "docs/runbooks/alert-auth-high-failure-rate.md"
+
+      # Technical alert: same auth surface, but the SRE-facing signal
+      # (5xx rate) rather than the product-facing one above.
+      - alert: StreamPulseAuthHighErrorRate
+        expr: |
+          (
+            sum(rate(streampulse_http_requests_total{path=~".*/api/v1/auth/.*", status=~"5.."}[5m]))
+            /
+            sum(rate(streampulse_http_requests_total{path=~".*/api/v1/auth/.*"}[5m]))
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          domain: technical
+        annotations:
+          summary: "Auth endpoints 5xx rate above 5%"
+          description: >-
+            More than 5% of requests to /api/v1/auth/* returned a 5xx over
+            the last 5 minutes. Likely a DB connectivity issue or a bad
+            deploy — check `docker compose logs api`.
+          runbook_url: "docs/runbooks/alert-auth-high-error-rate.md"
+
+      - alert: StreamPulseAuthHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(streampulse_http_request_duration_seconds_bucket{path=~".*/api/v1/auth/.*"}[5m])) by (le)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          domain: technical
+        annotations:
+          summary: "Auth p95 latency above 1s"
+          description: >-
+            95th percentile latency on /api/v1/auth/* has been above 1s
+            for 5 minutes — bcrypt cost, DB pool exhaustion, or noisy
+            neighbor on the compose host are the usual suspects here.
+          runbook_url: "docs/runbooks/alert-auth-high-latency.md"

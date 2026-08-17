@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
 	"github.com/streampulse/backend/internal/transport/http/handler"
 	"github.com/streampulse/backend/internal/transport/http/middleware"
@@ -33,5 +34,11 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	mux.Handle("GET /api/v1/users/me/data", requireAuth(http.HandlerFunc(h.User.ExportData)))
 	mux.Handle("DELETE /api/v1/users/me", requireAuth(http.HandlerFunc(h.User.DeleteMe)))
 
-	return mux
+	// Open scrape endpoint for local/docker-compose Prometheus. Not
+	// authenticated — acceptable for now since nothing here is deployed
+	// publicly yet (ticket K3); restricting /metrics at the network level
+	// or behind an auth token is a hardening item for ticket S3.
+	mux.Handle("GET /metrics", promhttp.Handler())
+
+	return middleware.Metrics(mux)
 }

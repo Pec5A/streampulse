@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -41,6 +42,13 @@ func run() error {
 		return err
 	}
 	slog.Info("database connected")
+
+	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer migrateCancel()
+	if err := persistence.Migrate(migrateCtx, db); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	slog.Info("migrations applied")
 
 	userRepo := persistence.NewUserRepository(db)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTExpiration)
