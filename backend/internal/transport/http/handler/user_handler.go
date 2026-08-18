@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/repository"
 	"github.com/streampulse/backend/internal/transport/http/middleware"
@@ -32,9 +33,7 @@ func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": user.ID, "email": user.Email, "username": user.Username, "role": user.Role,
-	})
+	writeJSON(w, http.StatusOK, dto.UserFrom(user))
 }
 
 // ExportData implements the RGPD right of access (GET /users/me/data).

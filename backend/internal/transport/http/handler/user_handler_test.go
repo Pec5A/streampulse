@@ -118,6 +118,32 @@ func TestUserHandler_DeleteMe(t *testing.T) {
 	}
 }
 
+// TestUserHandler_DeleteMe_Retry exercises the exact scenario flagged in
+// review: the caller's JWT stays valid for its full TTL after the account
+// row is gone, so a retried DELETE (double tap, network retry) must not
+// surface as a 500 — it must stay a clean 204, both times.
+func TestUserHandler_DeleteMe_Retry(t *testing.T) {
+	jwtManager := newTestJWTManager()
+	h, repo := newTestUserHandler()
+	id := seedUser(t, repo, "retry@b.com", "retryer")
+	token, err := jwtManager.Generate(id, "user")
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	protected := middleware.RequireAuth(jwtManager)(http.HandlerFunc(h.DeleteMe))
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodDelete, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		protected.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("call #%d: status = %d, want %d, body=%s", i+1, rec.Code, http.StatusNoContent, rec.Body.String())
+		}
+	}
+}
+
 func jsonHasKey(body, key string) bool {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(body), &m); err != nil {

@@ -48,6 +48,10 @@ func (uc *UserUseCase) ExportData(ctx context.Context, id string) (*PersonalData
 
 // DeleteMe implements the RGPD right to erasure (article 17).
 //
+// Idempotent: deleting an already-deleted (or never-existing) id is not an
+// error — see UserRepository.Delete's doc comment for why this matters for
+// a caller whose JWT is still valid after their account row is gone.
+//
 // This only deletes the users row for now (no dependent tables exist yet
 // in this repo). Once playlists/streams/tracks land (tickets K1/S1/K2),
 // this must cascade to them too — either via ON DELETE CASCADE at the
