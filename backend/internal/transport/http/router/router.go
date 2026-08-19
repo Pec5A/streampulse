@@ -13,8 +13,9 @@ import (
 )
 
 type Handlers struct {
-	Auth *handler.AuthHandler
-	User *handler.UserHandler
+	Auth  *handler.AuthHandler
+	User  *handler.UserHandler
+	Admin *handler.AdminHandler
 }
 
 func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
@@ -33,6 +34,17 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	mux.Handle("GET /api/v1/users/me", requireAuth(http.HandlerFunc(h.User.Me)))
 	mux.Handle("GET /api/v1/users/me/data", requireAuth(http.HandlerFunc(h.User.ExportData)))
 	mux.Handle("DELETE /api/v1/users/me", requireAuth(http.HandlerFunc(h.User.DeleteMe)))
+
+	// Admin area (ticket S2) — every route requires a valid JWT AND the admin
+	// role (RequireAuth then RequireAdmin).
+	if h.Admin != nil {
+		admin := func(fn http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(jwtManager)(middleware.RequireAdmin(http.HandlerFunc(fn)))
+		}
+		mux.Handle("GET /api/v1/admin/stats", admin(h.Admin.Stats))
+		mux.Handle("GET /api/v1/admin/users", admin(h.Admin.ListUsers))
+		mux.Handle("PATCH /api/v1/admin/users/{id}/role", admin(h.Admin.UpdateRole))
+	}
 
 	// Open scrape endpoint for local/docker-compose Prometheus. Not
 	// authenticated — acceptable for now since nothing here is deployed

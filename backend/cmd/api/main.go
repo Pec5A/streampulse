@@ -56,10 +56,12 @@ func run() error {
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
+	adminUC := usecase.NewAdminUseCase(userRepo)
 
 	handlers := router.Handlers{
-		Auth: handler.NewAuthHandler(authUC),
-		User: handler.NewUserHandler(userUC),
+		Auth:  handler.NewAuthHandler(authUC),
+		User:  handler.NewUserHandler(userUC),
+		Admin: handler.NewAdminHandler(adminUC),
 	}
 	mux := router.New(handlers, jwtManager)
 

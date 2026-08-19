@@ -66,11 +66,19 @@ func TestJWTManager_RejectsTamperedToken(t *testing.T) {
 		t.Fatalf("Generate() error = %v", err)
 	}
 
-	// Corrupt the payload segment (index 1), not just the last character of
-	// the signature — flipping a payload byte always changes the decoded
-	// claims and must fail signature verification, unlike flipping a
-	// signature-tail bit which can occasionally decode to an equivalent value.
-	tampered := token[:len(token)-20] + "X" + token[len(token)-19:]
+	// Corrupt one byte well inside the signature segment. Must not use a
+	// fixed replacement character: since the token (and so the byte at this
+	// offset) differs on every run, a fixed 'X' has a ~1/64 chance of
+	// already being the original character, making the "tamper" a no-op
+	// and the test flaky (observed failing in CI: "error = <nil>, want
+	// ErrInvalidToken"). Picking a replacement guaranteed to differ from
+	// the original byte removes that flake entirely.
+	idx := len(token) - 20
+	replacement := byte('X')
+	if token[idx] == replacement {
+		replacement = 'Y'
+	}
+	tampered := token[:idx] + string(replacement) + token[idx+1:]
 	if _, err := m.Validate(tampered); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("Validate() on tampered token error = %v, want ErrInvalidToken", err)
 	}
