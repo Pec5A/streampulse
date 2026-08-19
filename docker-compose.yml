@@ -55,7 +55,12 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./deployments/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      # One mount per provisioning directory, never a file mount nested
+      # inside a directory mount at the same path — the two fight over the
+      # same mountpoint and Docker Desktop on macOS fails with "read-only
+      # file system" trying to create it. dashboards.yml (the provider
+      # config) lives inside deployments/grafana/dashboards/ alongside the
+      # dashboard JSON it provisions, precisely so this stays one mount.
       - ./deployments/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./deployments/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
