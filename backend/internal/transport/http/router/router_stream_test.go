@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
 	"github.com/streampulse/backend/internal/domain/repository"
@@ -98,10 +100,49 @@ func (r *memStreamRepo) Delete(_ context.Context, id string) error {
 
 var _ repository.StreamRepository = (*memStreamRepo)(nil)
 
+// memUserRepo is the minimal repository.UserRepository the chat tests need:
+// just enough to resolve a display name for JoinChat.
+type memUserRepo struct {
+	mu   sync.Mutex
+	byID map[string]*entity.User
+}
+
+func newMemUserRepo() *memUserRepo {
+	return &memUserRepo{byID: map[string]*entity.User{}}
+}
+
+func (r *memUserRepo) Create(_ context.Context, u *entity.User) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clone := *u
+	r.byID[u.ID] = &clone
+	return nil
+}
+
+func (r *memUserRepo) FindByID(_ context.Context, id string) (*entity.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.byID[id]; ok {
+		clone := *u
+		return &clone, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (r *memUserRepo) FindByEmail(context.Context, string) (*entity.User, error) {
+	return nil, repository.ErrNotFound
+}
+func (r *memUserRepo) Update(context.Context, *entity.User) error { return nil }
+func (r *memUserRepo) Delete(context.Context, string) error       { return nil }
+
+var _ repository.UserRepository = (*memUserRepo)(nil)
+
 type liveRig struct {
 	server   *httptest.Server
 	repo     *memStreamRepo
+	users    *memUserRepo
 	registry *streaming.Registry
+	chats    *streaming.ChatRegistry
 	jwt      *auth.JWTManager
 	streamID string
 	owner    string
@@ -111,8 +152,10 @@ func newLiveRig(t *testing.T) *liveRig {
 	t.Helper()
 
 	repo := newMemStreamRepo()
+	users := newMemUserRepo()
 	registry := streaming.NewRegistry()
-	uc := usecase.NewStreamUseCase(repo, registry)
+	chats := streaming.NewChatRegistry()
+	uc := usecase.NewStreamUseCase(repo, users, registry, chats)
 	jwtManager := auth.NewJWTManager(streamTestSecret, time.Hour)
 
 	mux := New(Handlers{
@@ -122,16 +165,18 @@ func newLiveRig(t *testing.T) *liveRig {
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {
-		// Close the registry first: it releases the listener handlers still
-		// parked on their hubs. srv.Close() waits for active connections, so
-		// the reverse order deadlocks for 5s on every streaming test.
+		// Close the registries first: they release the listener/chat
+		// handlers still parked on their hubs. srv.Close() waits for active
+		// connections, so the reverse order deadlocks for 5s on every
+		// streaming test.
 		registry.CloseAll()
+		chats.CloseAll()
 		srv.Close()
 	})
 
 	rig := &liveRig{
-		server: srv, repo: repo, registry: registry, jwt: jwtManager,
-		streamID: "stream-1", owner: "user-1",
+		server: srv, repo: repo, users: users, registry: registry, chats: chats,
+		jwt: jwtManager, streamID: "stream-1", owner: "user-1",
 	}
 	if err := repo.Create(context.Background(), &entity.Stream{
 		ID: rig.streamID, Title: "Jazz de nuit", BroadcasterID: rig.owner,
@@ -139,6 +184,7 @@ func newLiveRig(t *testing.T) *liveRig {
 	}); err != nil {
 		t.Fatalf("seed stream: %v", err)
 	}
+	rig.seedUser(t, rig.owner, "broadcaster")
 	return rig
 }
 
@@ -149,6 +195,18 @@ func (rig *liveRig) token(t *testing.T, userID string) string {
 		t.Fatalf("generate token: %v", err)
 	}
 	return tok
+}
+
+// seedUser registers a user so JoinChat can resolve a display name for
+// them. Tests that dial the chat WebSocket as a given userID must seed that
+// id first, same as they must mint a token for it.
+func (rig *liveRig) seedUser(t *testing.T, userID, username string) {
+	t.Helper()
+	if err := rig.users.Create(context.Background(), &entity.User{
+		ID: userID, Email: userID + "@b.com", Username: username, Role: entity.RoleUser,
+	}); err != nil {
+		t.Fatalf("seed user %s: %v", userID, err)
+	}
 }
 
 // startBroadcast opens a chunked publish connection and returns a writer for
@@ -495,7 +553,7 @@ func TestRouter_StreamRouteAuthMatrix(t *testing.T) {
 			New(Handlers{
 				Auth: handler.NewAuthHandler(nil),
 				Stream: handler.NewStreamHandler(
-					usecase.NewStreamUseCase(rig.repo, rig.registry)),
+					usecase.NewStreamUseCase(rig.repo, rig.users, rig.registry, rig.chats)),
 			}, rig.jwt).ServeHTTP(rec, req)
 
 			gotUnauthorized := rec.Code == http.StatusUnauthorized
@@ -548,5 +606,187 @@ func TestRouter_StreamJSONShape(t *testing.T) {
 		if _, ok := raw[key]; !ok {
 			t.Errorf("response is missing the %q field", key)
 		}
+	}
+}
+
+// chatWSURL builds the chat WebSocket URL for userID, token as a query
+// parameter for the same browser-cannot-set-headers reason as publish/ws.
+func (rig *liveRig) chatWSURL(t *testing.T, userID string) string {
+	t.Helper()
+	return "ws" + strings.TrimPrefix(rig.server.URL, "http") +
+		"/api/v1/streams/" + rig.streamID + "/chat" +
+		"?token=" + url.QueryEscape(rig.token(t, userID))
+}
+
+func TestLiveStream_ChatFansOutToEveryParticipantIncludingTheSender(t *testing.T) {
+	rig := newLiveRig(t)
+	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
+	defer stopBroadcast()
+
+	const participants = 3
+	rig.seedUser(t, "listener-1", "alice")
+	rig.seedUser(t, "listener-2", "bob")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conns := make([]*websocket.Conn, participants)
+	for i, userID := range []string{rig.owner, "listener-1", "listener-2"} {
+		conn, _, err := websocket.Dial(ctx, rig.chatWSURL(t, userID), nil)
+		if err != nil {
+			t.Fatalf("dial chat as %s: %v", userID, err)
+		}
+		defer func() { _ = conn.CloseNow() }()
+		conns[i] = conn
+	}
+
+	if err := wsjson.Write(ctx, conns[1], dto.ChatIncoming{Text: "hello from alice"}); err != nil {
+		t.Fatalf("write chat message: %v", err)
+	}
+
+	for i, conn := range conns {
+		var msg streaming.ChatMessage
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			t.Fatalf("participant %d: read chat message: %v", i, err)
+		}
+		if msg.Text != "hello from alice" {
+			t.Errorf("participant %d: Text = %q, want %q", i, msg.Text, "hello from alice")
+		}
+		if msg.Username != "alice" {
+			t.Errorf("participant %d: Username = %q, want alice (server-resolved, not client-claimed)", i, msg.Username)
+		}
+		if msg.UserID != "listener-1" {
+			t.Errorf("participant %d: UserID = %q, want listener-1", i, msg.UserID)
+		}
+	}
+}
+
+func TestLiveStream_ChatRejectsMissingOrBadToken(t *testing.T) {
+	rig := newLiveRig(t)
+	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
+	defer stopBroadcast()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	base := "ws" + strings.TrimPrefix(rig.server.URL, "http") +
+		"/api/v1/streams/" + rig.streamID + "/chat"
+
+	for name, target := range map[string]string{
+		"no token":      base,
+		"garbage token": base + "?token=not-a-jwt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn, resp, err := websocket.Dial(ctx, target, nil)
+			if err == nil {
+				_ = conn.CloseNow()
+				t.Fatal("dial succeeded, want it rejected")
+			}
+			if resp != nil && resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+			}
+		})
+	}
+}
+
+func TestLiveStream_ChatRejectsWhenStreamIsNotLive(t *testing.T) {
+	// The stream exists but nobody is broadcasting, so there is no chat room
+	// to join — same "not live" outcome a listener gets from /listen.
+	rig := newLiveRig(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, resp, err := websocket.Dial(ctx, rig.chatWSURL(t, rig.owner), nil)
+	if err == nil {
+		_ = conn.CloseNow()
+		t.Fatal("dial succeeded for an offline stream, want it rejected")
+	}
+	if resp != nil && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestLiveStream_ChatDoesNotRequireBroadcasterOwnership(t *testing.T) {
+	// Unlike publish, any authenticated user may join and post in chat.
+	rig := newLiveRig(t)
+	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
+	defer stopBroadcast()
+	rig.seedUser(t, "stranger", "rando")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, rig.chatWSURL(t, "stranger"), nil)
+	if err != nil {
+		t.Fatalf("dial chat as a non-owner: %v", err)
+	}
+	_ = conn.CloseNow()
+}
+
+func TestLiveStream_ChatEndsWhenTheBroadcastStops(t *testing.T) {
+	rig := newLiveRig(t)
+	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, rig.chatWSURL(t, rig.owner), nil)
+	if err != nil {
+		t.Fatalf("dial chat: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	stopBroadcast()
+
+	// The chat room closes in lockstep with the audio hub (StopLive), so the
+	// connection must end rather than hang open on a room nobody will ever
+	// publish to again.
+	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer readCancel()
+	var msg streaming.ChatMessage
+	if err := wsjson.Read(readCtx, conn, &msg); err == nil {
+		t.Fatal("read succeeded after the broadcast stopped, want the connection closed")
+	}
+}
+
+func TestLiveStream_ChatRejectsOverlongMessagesWithoutBroadcastingThemOrClosingTheConnection(t *testing.T) {
+	rig := newLiveRig(t)
+	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
+	defer stopBroadcast()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, rig.chatWSURL(t, rig.owner), nil)
+	if err != nil {
+		t.Fatalf("dial chat: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	overlong := strings.Repeat("x", 501)
+	if err := wsjson.Write(ctx, conn, dto.ChatIncoming{Text: overlong}); err != nil {
+		t.Fatalf("write overlong message: %v", err)
+	}
+
+	var errFrame dto.ChatErrorFrame
+	if err := wsjson.Read(ctx, conn, &errFrame); err != nil {
+		t.Fatalf("read error frame: %v", err)
+	}
+	if errFrame.Error == "" {
+		t.Error("expected a non-empty error message for the rejected send")
+	}
+
+	// The connection must still be usable: a rejected message is not a fatal
+	// protocol error, only that one send is refused.
+	if err := wsjson.Write(ctx, conn, dto.ChatIncoming{Text: "this one is fine"}); err != nil {
+		t.Fatalf("write valid message after a rejection: %v", err)
+	}
+	var msg streaming.ChatMessage
+	if err := wsjson.Read(ctx, conn, &msg); err != nil {
+		t.Fatalf("read valid message after a rejection: %v", err)
+	}
+	if msg.Text != "this one is fine" {
+		t.Errorf("Text = %q, want %q", msg.Text, "this one is fine")
 	}
 }

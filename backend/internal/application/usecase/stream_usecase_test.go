@@ -101,10 +101,24 @@ var _ repository.StreamRepository = (*fakeStreamRepo)(nil)
 
 func newStreamUC(t *testing.T) (*StreamUseCase, *fakeStreamRepo, *streaming.Registry) {
 	t.Helper()
+	uc, repo, _, reg, _ := newStreamUCWithChat(t)
+	return uc, repo, reg
+}
+
+// newStreamUCWithChat is newStreamUC plus access to the user repo (to seed a
+// participant for JoinChat) and the chat registry (to assert room state
+// directly) — kept separate so the many existing call sites above that only
+// destructure 3 values don't need touching for a dependency only the chat
+// tests care about.
+func newStreamUCWithChat(t *testing.T) (*StreamUseCase, *fakeStreamRepo, *fakeUserRepo, *streaming.Registry, *streaming.ChatRegistry) {
+	t.Helper()
 	repo := newFakeStreamRepo()
+	users := newFakeUserRepo()
 	reg := streaming.NewRegistry()
+	chats := streaming.NewChatRegistry()
 	t.Cleanup(reg.CloseAll)
-	return NewStreamUseCase(repo, reg), repo, reg
+	t.Cleanup(chats.CloseAll)
+	return NewStreamUseCase(repo, users, reg, chats), repo, users, reg, chats
 }
 
 func mustCreateStream(t *testing.T, uc *StreamUseCase, owner string) *entity.Stream {
@@ -442,5 +456,122 @@ func TestStreamUseCase_GetAndList(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Errorf("List returned %d streams, want 1", len(all))
+	}
+}
+
+func TestStreamUseCase_StartLiveOpensTheChatRoomTogetherWithTheHub(t *testing.T) {
+	uc, _, _, _, chats := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+
+	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	if _, err := chats.Get(s.ID); err != nil {
+		t.Errorf("chat room not opened by StartLive: Get() error = %v", err)
+	}
+}
+
+func TestStreamUseCase_StopLiveClosesTheChatRoomToo(t *testing.T) {
+	uc, _, _, _, chats := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	if err := uc.StopLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StopLive() error = %v", err)
+	}
+
+	if _, err := chats.Get(s.ID); err != streaming.ErrStreamNotFound {
+		t.Errorf("chat room not closed by StopLive: Get() error = %v, want ErrStreamNotFound", err)
+	}
+}
+
+func TestStreamUseCase_DeleteClosesTheChatRoomToo(t *testing.T) {
+	uc, _, _, _, chats := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	if err := uc.Delete(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if _, err := chats.Get(s.ID); err != streaming.ErrStreamNotFound {
+		t.Errorf("chat room not closed by Delete: Get() error = %v, want ErrStreamNotFound", err)
+	}
+}
+
+func TestStreamUseCase_JoinChatResolvesTheParticipantsUsername(t *testing.T) {
+	uc, _, users, _, _ := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	participant := &entity.User{Email: "listener@b.com", Username: "chatty"}
+	if err := users.Create(context.Background(), participant); err != nil {
+		t.Fatalf("seed participant: %v", err)
+	}
+
+	hub, username, err := uc.JoinChat(context.Background(), s.ID, participant.ID)
+	if err != nil {
+		t.Fatalf("JoinChat() error = %v", err)
+	}
+	if hub == nil {
+		t.Fatal("JoinChat returned a nil hub")
+	}
+	if username != "chatty" {
+		t.Errorf("username = %q, want chatty", username)
+	}
+}
+
+func TestStreamUseCase_JoinChatOnAnOfflineStream(t *testing.T) {
+	// The stream exists but nobody has started broadcasting yet, so no chat
+	// room exists — joining must fail the same way LiveHub does for a
+	// listener, not with some other opaque error.
+	uc, _, users, _, _ := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+
+	participant := &entity.User{Email: "listener@b.com", Username: "chatty"}
+	if err := users.Create(context.Background(), participant); err != nil {
+		t.Fatalf("seed participant: %v", err)
+	}
+
+	if _, _, err := uc.JoinChat(context.Background(), s.ID, participant.ID); !errors.Is(err, ErrStreamNotLive) {
+		t.Errorf("JoinChat() on an offline stream error = %v, want ErrStreamNotLive", err)
+	}
+}
+
+func TestStreamUseCase_JoinChatDoesNotRequireOwnership(t *testing.T) {
+	// Unlike StartLive/StopLive, any authenticated user may join and post in
+	// a live stream's chat — the same openness as Listen for audio.
+	uc, _, users, _, _ := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "owner")
+	if _, err := uc.StartLive(context.Background(), s.ID, "owner", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	stranger := &entity.User{Email: "stranger@b.com", Username: "rando"}
+	if err := users.Create(context.Background(), stranger); err != nil {
+		t.Fatalf("seed stranger: %v", err)
+	}
+
+	if _, _, err := uc.JoinChat(context.Background(), s.ID, stranger.ID); err != nil {
+		t.Errorf("JoinChat() by a non-owner error = %v, want nil", err)
+	}
+}
+
+func TestStreamUseCase_JoinChatWithAnUnknownUser(t *testing.T) {
+	uc, _, _, _, _ := newStreamUCWithChat(t)
+	s := mustCreate(t, uc, "user-1")
+	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
+		t.Fatalf("StartLive() error = %v", err)
+	}
+
+	if _, _, err := uc.JoinChat(context.Background(), s.ID, "ghost"); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("JoinChat() with an unknown user error = %v, want ErrNotFound", err)
 	}
 }
