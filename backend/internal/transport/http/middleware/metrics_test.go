@@ -30,22 +30,38 @@ func TestMetrics_RecordsRequestCountAndStatus(t *testing.T) {
 	}
 }
 
-func TestMetrics_RecordsUnmatchedRouteByRawPath(t *testing.T) {
+func TestMetrics_CollapsesUnmatchedRoutesOntoOneLabel(t *testing.T) {
+	// Guards against unbounded label cardinality: an unauthenticated scanner
+	// hitting many distinct unmatched URLs must NOT mint one Prometheus
+	// series per URL (a memory-exhaustion DoS). Every 404 collapses onto the
+	// single "<unmatched>" label instead.
 	mux := http.NewServeMux()
 	handler := Metrics(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	before := testutil.ToFloat64(
+		observability.HTTPRequestsTotal.WithLabelValues("GET", unmatchedRoute, "404"))
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	for _, p := range []string{"/x/1", "/x/2", "/x/3", "/scanner/probe"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want %d", p, rec.Code, http.StatusNotFound)
+		}
 	}
-	// No registered pattern matched, so Request.Pattern is empty and the
-	// middleware falls back to the raw path — just confirm it doesn't panic
-	// and still records something under the raw path label.
-	got := testutil.ToFloat64(observability.HTTPRequestsTotal.WithLabelValues("GET", "/does-not-exist", "404"))
-	if got < 1 {
-		t.Errorf("HTTPRequestsTotal for unmatched route = %v, want >= 1", got)
+
+	// All four requests land on the single "<unmatched>" series...
+	after := testutil.ToFloat64(
+		observability.HTTPRequestsTotal.WithLabelValues("GET", unmatchedRoute, "404"))
+	if after-before < 4 {
+		t.Errorf("<unmatched> counter rose by %v, want >= 4", after-before)
+	}
+
+	// ...and never under a raw URL, which would be the unbounded-cardinality bug.
+	for _, p := range []string{"/x/1", "/x/2", "/x/3", "/scanner/probe"} {
+		if raw := testutil.ToFloat64(
+			observability.HTTPRequestsTotal.WithLabelValues("GET", p, "404")); raw != 0 {
+			t.Errorf("raw path %q leaked a series (=%v); label cardinality is unbounded", p, raw)
+		}
 	}
 }

@@ -62,7 +62,13 @@ func (h *UserHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing authentication")
 		return
 	}
-	if err := h.uc.DeleteMe(r.Context(), userID); err != nil {
+	// ErrNotFound is not an error for a self-delete: the account is already
+	// gone, which is the intended end state (the caller's JWT stays valid
+	// for its full TTL after the row is deleted, so a retried DELETE must
+	// stay idempotent). The repository is idempotent today, so this branch
+	// is belt-and-suspenders — it keeps the handler correct even if the
+	// repository's behaviour ever changes, instead of leaking a 500.
+	if err := h.uc.DeleteMe(r.Context(), userID); err != nil && !errors.Is(err, repository.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
