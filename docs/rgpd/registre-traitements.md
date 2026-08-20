@@ -1,12 +1,14 @@
 # Registre des activités de traitement — StreamPulse (RGPD art. 30)
 
 > **Responsable de traitement** : équipe StreamPulse (projet pédagogique RNCP Bloc 3).
-> Ce registre documente les traitements de données à caractère personnel de la plateforme. Support **A3.6** ; complète la fonctionnalité RGPD (export + suppression) du ticket **Y2**.
+> Ce registre documente les traitements de données à caractère personnel **cibles** de la plateforme. Support **A3.6**.
 > Dernière mise à jour : 2026-08-05.
+
+> **Statut de livraison** : l'**auth** et l'**admin** sont sur `main`. Les **playlists** (S1, PR #16) et l'**export/suppression RGPD** (Y2, PR #14) sont **en cours de review**, pas encore mergés — signalés ci-dessous. Le registre décrit le traitement prévu ; il sera confirmé « en production » au fil des merges.
 
 ---
 
-## 1. Comptes utilisateurs & authentification
+## 1. Comptes utilisateurs & authentification *(sur `main`)*
 
 | Élément | Détail |
 |---|---|
@@ -19,7 +21,7 @@
 | **Transferts hors UE** | Aucun. |
 | **Sécurité** | bcrypt ; JWT signé HS256 (secret ≥ 32 car., hors code) ; HTTPS ; moindre privilège ; scans CI (gitleaks / trivy / govulncheck). |
 
-## 2. Contenus — playlists & pistes
+## 2. Contenus — playlists & pistes *(S1 — en review, PR #16)*
 
 | Élément | Détail |
 |---|---|
@@ -37,9 +39,11 @@
 | **Données** | Logs applicatifs (identifiant utilisateur issu du JWT, horodatage, route) — pas d'autres données personnelles. |
 | **Conservation** | Durée d'exploitation courte, rotation. |
 
-> _Streaming live & upload de fichiers (tickets K1/K2) : à intégrer à ce registre lorsqu'ils seront livrés (données : flux, fichiers audio, `broadcaster_id`)._
+> _Streaming live & upload de fichiers (tickets K1/K2, PR #22/#23 en cours) : à intégrer à ce registre lorsqu'ils seront livrés (données : flux, fichiers audio, `broadcaster_id`)._
 
 ## 4. Droits des personnes
+
+> Les mécanismes d'**export** et d'**effacement** ci-dessous sont fournis par le ticket **Y2** (PR #14, en review) — opérationnels une fois mergé.
 
 | Droit | Mise en œuvre |
 |---|---|
