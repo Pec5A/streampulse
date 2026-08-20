@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
+
 import '../../../core/api/api_client.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../cache/playlist_cache.dart';
@@ -20,35 +25,34 @@ class PlaylistRepository {
 
   static const _base = '/api/v1/playlists';
 
-  /// Lists the caller's playlists; on a network failure, serves the last cached
-  /// snapshot so the list stays available offline.
+  /// Lists the caller's playlists; only on a genuine connectivity failure does
+  /// it fall back to the last cached snapshot. A server error (ApiException) or
+  /// a malformed response is propagated, never masked by stale cache.
   Future<List<PlaylistModel>> list() async {
     try {
       final json = await _api.getList(_base, token: await _storage.readToken());
       final playlists = json.map((e) => PlaylistModel.fromJson(e as Map<String, dynamic>)).toList();
       await _cache.savePlaylists(playlists);
       return playlists;
-    } on ApiException {
-      rethrow; // a real API error must not be masked by stale cache
-    } catch (_) {
-      return _cache.readPlaylists();
+    } catch (e) {
+      if (_isOffline(e)) return _cache.readPlaylists();
+      rethrow;
     }
   }
 
-  /// Fetches a playlist with its tracks; on a network failure, returns the
-  /// cached copy if present (a previously-opened playlist stays playable
-  /// offline).
+  /// Fetches a playlist with its tracks; only on a connectivity failure does it
+  /// return the cached copy (if present).
   Future<PlaylistModel> get(String id) async {
     try {
       final json = await _api.get('$_base/$id', token: await _storage.readToken());
       final playlist = PlaylistModel.fromJson(json);
       await _cache.savePlaylist(playlist);
       return playlist;
-    } on ApiException {
-      rethrow;
-    } catch (_) {
-      final cached = await _cache.readPlaylist(id);
-      if (cached != null) return cached;
+    } catch (e) {
+      if (_isOffline(e)) {
+        final cached = await _cache.readPlaylist(id);
+        if (cached != null) return cached;
+      }
       rethrow;
     }
   }
@@ -99,3 +103,9 @@ class PlaylistRepository {
     return PlaylistModel.fromJson(json);
   }
 }
+
+/// Whether [e] is a genuine connectivity failure (device offline, unreachable
+/// host, or timeout) — the only case where serving stale cache is correct. A
+/// server error (ApiException) or a decoding failure (FormatException) must
+/// surface instead of being silently swallowed.
+bool _isOffline(Object e) => e is SocketException || e is http.ClientException || e is TimeoutException;
