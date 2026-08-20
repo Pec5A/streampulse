@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
@@ -62,7 +63,11 @@ func (h *PlaylistHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlaylistHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
-	p, tracks, err := h.uc.Get(r.Context(), userID, r.PathValue("id"))
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	p, tracks, err := h.uc.Get(r.Context(), userID, id)
 	if err != nil {
 		h.writeUCError(w, err)
 		return
@@ -72,12 +77,16 @@ func (h *PlaylistHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlaylistHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
 	var req dto.UpdatePlaylistRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	p, err := h.uc.Update(r.Context(), userID, r.PathValue("id"), req.Name, req.Description, req.IsPublic)
+	p, err := h.uc.Update(r.Context(), userID, id, req.Name, req.Description, req.IsPublic)
 	if err != nil {
 		h.writeUCError(w, err)
 		return
@@ -87,7 +96,11 @@ func (h *PlaylistHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlaylistHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
-	if err := h.uc.Delete(r.Context(), userID, r.PathValue("id")); err != nil {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.uc.Delete(r.Context(), userID, id); err != nil {
 		h.writeUCError(w, err)
 		return
 	}
@@ -96,12 +109,16 @@ func (h *PlaylistHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlaylistHandler) AddTrack(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
 	var req dto.AddTrackRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	track, err := h.uc.AddTrack(r.Context(), userID, r.PathValue("id"), entity.Track{
+	track, err := h.uc.AddTrack(r.Context(), userID, id, entity.Track{
 		Title:           req.Title,
 		Artist:          req.Artist,
 		DurationSeconds: req.DurationSeconds,
@@ -116,7 +133,15 @@ func (h *PlaylistHandler) AddTrack(w http.ResponseWriter, r *http.Request) {
 
 func (h *PlaylistHandler) RemoveTrack(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
-	if err := h.uc.RemoveTrack(r.Context(), userID, r.PathValue("id"), r.PathValue("trackID")); err != nil {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	trackID, ok := pathID(w, r, "trackID")
+	if !ok {
+		return
+	}
+	if err := h.uc.RemoveTrack(r.Context(), userID, id, trackID); err != nil {
 		h.writeUCError(w, err)
 		return
 	}
@@ -127,12 +152,15 @@ func (h *PlaylistHandler) RemoveTrack(w http.ResponseWriter, r *http.Request) {
 // reordered view so the client can reconcile its optimistic update.
 func (h *PlaylistHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
+	playlistID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
 	var req dto.ReorderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	playlistID := r.PathValue("id")
 	if err := h.uc.ReorderTracks(r.Context(), userID, playlistID, req.TrackIDs); err != nil {
 		h.writeUCError(w, err)
 		return
@@ -143,6 +171,18 @@ func (h *PlaylistHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dto.PlaylistWithTracks(p, tracks))
+}
+
+// pathID reads a UUID path parameter; it writes a 400 and returns ok=false when
+// the value is malformed, so bad client input never reaches the database (which
+// would otherwise reject it with SQLSTATE 22P02 and surface as a 500).
+func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
+	v := r.PathValue(name)
+	if _, err := uuid.Parse(v); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid "+name+" format")
+		return "", false
+	}
+	return v, true
 }
 
 func (h *PlaylistHandler) writeUCError(w http.ResponseWriter, err error) {

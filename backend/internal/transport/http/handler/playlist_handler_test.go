@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
@@ -22,25 +22,26 @@ import (
 )
 
 // memRepo is an in-memory repository.PlaylistRepository for black-box handler
-// tests (drives real usecase + router + auth middleware, no database).
+// tests (drives real usecase + router + auth middleware, no database). It mints
+// real UUID ids, matching what Postgres produces, so id-format validation in
+// the handler behaves the same here as in production.
 type memRepo struct {
 	mu        sync.Mutex
 	playlists map[string]*entity.Playlist
 	tracks    map[string][]entity.Track
-	seq       int
 }
 
 func newMemRepo() *memRepo {
 	return &memRepo{playlists: map[string]*entity.Playlist{}, tracks: map[string][]entity.Track{}}
 }
 
-func (r *memRepo) id(p string) string { r.seq++; return fmt.Sprintf("%s-%d", p, r.seq) }
+func (r *memRepo) id() string { return uuid.NewString() }
 
 func (r *memRepo) Create(_ context.Context, p *entity.Playlist) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if p.ID == "" {
-		p.ID = r.id("pl")
+		p.ID = r.id()
 	}
 	now := time.Now()
 	p.CreatedAt, p.UpdatedAt = now, now
@@ -103,7 +104,7 @@ func (r *memRepo) AddTrack(_ context.Context, t *entity.Track) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t.ID == "" {
-		t.ID = r.id("tr")
+		t.ID = r.id()
 	}
 	t.Position = len(r.tracks[t.PlaylistID])
 	r.tracks[t.PlaylistID] = append(r.tracks[t.PlaylistID], *t)
@@ -251,7 +252,7 @@ func TestPlaylistAPI_GetForbiddenAndNotFound(t *testing.T) {
 	if rec := do(t, srv, http.MethodGet, "/api/v1/playlists/"+p.ID, bob, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("bob get code = %d, want 403", rec.Code)
 	}
-	if rec := do(t, srv, http.MethodGet, "/api/v1/playlists/missing", alice, nil); rec.Code != http.StatusNotFound {
+	if rec := do(t, srv, http.MethodGet, "/api/v1/playlists/00000000-0000-0000-0000-000000000000", alice, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing get code = %d, want 404", rec.Code)
 	}
 }

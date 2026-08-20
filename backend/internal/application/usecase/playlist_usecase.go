@@ -21,7 +21,13 @@ var (
 	ErrInvalidReorder = errors.New("reorder list must contain exactly the playlist's tracks")
 )
 
-const maxNameLen = 80
+const (
+	// maxNameLen bounds a playlist name (matches playlists.name VARCHAR(80)).
+	maxNameLen = 80
+	// maxTrackTextLen bounds a track's title/artist (matches the VARCHAR(200)
+	// columns) so over-long input fails as a 400, not a database 500.
+	maxTrackTextLen = 200
+)
 
 type PlaylistUseCase struct {
 	repo repository.PlaylistRepository
@@ -104,8 +110,12 @@ func (uc *PlaylistUseCase) AddTrack(ctx context.Context, callerID, playlistID st
 		return nil, err
 	}
 	t.Title = strings.TrimSpace(t.Title)
-	if t.Title == "" {
-		return nil, fmt.Errorf("%w: track title is required", ErrValidation)
+	if t.Title == "" || len(t.Title) > maxTrackTextLen {
+		return nil, fmt.Errorf("%w: track title must be 1..%d characters", ErrValidation, maxTrackTextLen)
+	}
+	t.Artist = strings.TrimSpace(t.Artist)
+	if len(t.Artist) > maxTrackTextLen {
+		return nil, fmt.Errorf("%w: artist must be at most %d characters", ErrValidation, maxTrackTextLen)
 	}
 	if t.DurationSeconds < 0 {
 		return nil, fmt.Errorf("%w: duration must be >= 0", ErrValidation)
