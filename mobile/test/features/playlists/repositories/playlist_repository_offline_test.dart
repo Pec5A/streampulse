@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,57 +14,60 @@ import 'package:streampulse/features/playlists/repositories/playlist_repository.
 
 class MockSecureStorage extends Mock implements SecureStorage {}
 
+PlaylistRepository repoWith(http.Client client, {PlaylistCache cache = const PlaylistCache()}) {
+  final storage = MockSecureStorage();
+  when(() => storage.readToken()).thenAnswer((_) async => null);
+  return PlaylistRepository(
+    apiClient: ApiClient(baseUrl: 'http://x', client: client),
+    storage: storage,
+    cache: cache,
+  );
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('list() serves the cached snapshot when the network is down', () async {
+  test('list() serves the cached snapshot on a ClientException (offline)', () async {
     const cache = PlaylistCache();
     const cached = PlaylistModel(id: 'p1', ownerId: 'u', name: 'Cached Mix', description: '', isPublic: false);
     await cache.savePlaylists(const [cached]);
 
-    final storage = MockSecureStorage();
-    when(() => storage.readToken()).thenAnswer((_) async => 'tok');
-
     final offline = MockClient((_) async => throw http.ClientException('offline'));
-    final repo = PlaylistRepository(
-      apiClient: ApiClient(baseUrl: 'http://unreachable', client: offline),
-      storage: storage,
-      cache: cache,
-    );
+    expect(await repoWith(offline, cache: cache).list(), const [cached]);
+  });
 
-    expect(await repo.list(), const [cached]);
+  test('list() serves the cached snapshot on a SocketException (offline)', () async {
+    const cache = PlaylistCache();
+    const cached = PlaylistModel(id: 'p1', ownerId: 'u', name: 'Cached Mix', description: '', isPublic: false);
+    await cache.savePlaylists(const [cached]);
+
+    final offline = MockClient((_) async => throw const SocketException('no route to host'));
+    expect(await repoWith(offline, cache: cache).list(), const [cached]);
   });
 
   test('list() caches the response so a later offline read returns it', () async {
-    final storage = MockSecureStorage();
-    when(() => storage.readToken()).thenAnswer((_) async => null);
-
     final online = MockClient(
       (_) async => http.Response('[{"id":"p2","owner_id":"u","name":"Live","description":"","is_public":false}]', 200),
     );
     const cache = PlaylistCache();
-    final repo = PlaylistRepository(
-      apiClient: ApiClient(baseUrl: 'http://ok', client: online),
-      storage: storage,
-      cache: cache,
-    );
-
-    final result = await repo.list();
+    final result = await repoWith(online, cache: cache).list();
     expect(result.single.name, 'Live');
     expect((await cache.readPlaylists()).single.id, 'p2');
   });
 
-  test('list() does not mask a real API error with cache', () async {
-    final storage = MockSecureStorage();
-    when(() => storage.readToken()).thenAnswer((_) async => null);
-
+  test('list() does not mask a 500 with a JSON body', () async {
     final failing = MockClient((_) async => http.Response('{"error":"boom"}', 500));
-    final repo = PlaylistRepository(
-      apiClient: ApiClient(baseUrl: 'http://ok', client: failing),
-      storage: storage,
-      cache: const PlaylistCache(),
-    );
+    expect(() => repoWith(failing).list(), throwsA(isA<ApiException>()));
+  });
 
-    expect(() => repo.list(), throwsA(isA<ApiException>()));
+  test('list() does not mask a 500 with a non-JSON body (the review bug)', () async {
+    // Prime the cache to prove it is NOT served when the server errors.
+    await const PlaylistCache().savePlaylists(
+      const [PlaylistModel(id: 'stale', ownerId: 'u', name: 'stale', description: '', isPublic: false)],
+    );
+    // A reverse-proxy HTML error page — not valid JSON. Previously this raised a
+    // FormatException that the generic catch swallowed, silently serving cache.
+    final proxyError = MockClient((_) async => http.Response('<html>502 Bad Gateway</html>', 500));
+    await expectLater(repoWith(proxyError).list(), throwsA(isA<ApiException>()));
   });
 }

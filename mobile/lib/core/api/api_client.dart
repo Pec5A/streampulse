@@ -76,9 +76,15 @@ class ApiClient {
     if (res.statusCode >= 200 && res.statusCode < 300) return;
     String? message;
     if (res.body.isNotEmpty) {
-      final decoded = jsonDecode(res.body);
-      if (decoded is Map<String, dynamic>) {
-        message = decoded['error'] as String?;
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          message = decoded['error'] as String?;
+        }
+      } on FormatException {
+        // A non-JSON error body (a proxy's HTML page, a plain-text panic): still
+        // surface a typed ApiException with the status code, never let a raw
+        // FormatException escape (which a caller can't tell from a bug/offline).
       }
     }
     throw ApiException(res.statusCode, message ?? 'unknown error');
