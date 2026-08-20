@@ -5,6 +5,7 @@ import 'package:streampulse/core/api/api_client.dart';
 import 'package:streampulse/core/storage/secure_storage.dart';
 import 'package:streampulse/features/admin/repositories/admin_repository.dart';
 import 'package:streampulse/features/auth/repository/auth_repository.dart';
+import 'package:streampulse/features/playlists/repositories/playlist_repository.dart';
 import 'package:streampulse/main.dart';
 
 void main() {
@@ -15,6 +16,7 @@ void main() {
     await tester.pumpWidget(StreamPulseApp(
       authRepository: AuthRepository(apiClient: apiClient, storage: storage),
       adminRepository: AdminRepository(apiClient: apiClient, storage: storage),
+      playlistRepository: PlaylistRepository(apiClient: apiClient, storage: storage),
     ));
 
     expect(find.text('Connexion'), findsOneWidget);
