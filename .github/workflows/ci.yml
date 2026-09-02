@@ -14,9 +14,29 @@ jobs:
   backend-quality:
     name: Go Quality
     runs-on: ubuntu-latest
+    # A real Postgres, so the `integration` tests actually run. Without one
+    # they were skipped silently and rotted: launched by hand against a fresh
+    # database they failed on `relation "users" does not exist`, weeks after
+    # being written. A test that never executes is not a test, it is a file.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: streampulse
+          POSTGRES_USER: streampulse
+          POSTGRES_PASSWORD: streampulse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U streampulse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
+    env:
+      DATABASE_URL: postgres://streampulse:streampulse@localhost:5432/streampulse?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -38,14 +58,25 @@ jobs:
           gosec -quiet -severity medium ./...
 
       - name: Test with race detector
-        run: go test -race -coverprofile=coverage.out ./...
+        # -tags=integration: the persistence tests need the Postgres service
+        # above; they apply their own migrations, so an empty database is
+        # enough.
+        #
+        # -coverpkg=./internal/...: the number then counts what the router and
+        # integration tests actually exercise, not just the package the test
+        # file sits in. Without it the end-to-end router tests credit nothing
+        # to the handlers they drive, and the total under-reports real cover.
+        run: |
+          go test ./... -tags=integration -race \
+            -coverpkg=./internal/... -coverprofile=coverage.out -covermode=atomic
 
       - name: Enforce coverage floor
         env:
-          # Honest baseline as of ticket Y3 (~57% overall backend
-          # coverage). Raise as more tickets land real tests — don't jump
-          # ahead of actual coverage gains.
-          COVERAGE_FLOOR: '50'
+          # Raised 50 -> 80 once the integration tests actually ran: the
+          # measured total went from 57% to 83.0%. 80% is the figure the brief
+          # asks for ("testable unitairement à 80% minimum"), so the gate now
+          # enforces the requirement instead of documenting a shortfall.
+          COVERAGE_FLOOR: '80'
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Coverage: ${COVERAGE}% (floor: ${COVERAGE_FLOOR}%)"
@@ -55,6 +86,9 @@ jobs:
           fi
 
       - name: Upload coverage
+        # Uploaded even when the gate trips: the profile is what says which
+        # package lost ground.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
