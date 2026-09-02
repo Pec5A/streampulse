@@ -130,10 +130,7 @@ func TestHub_EvictsListenerAfterConsecutiveDrops(t *testing.T) {
 
 	// Eviction happens in its own goroutine; wait for the channel to close.
 	deadline := time.After(2 * time.Second)
-	for {
-		if hub.ListenerCount() == 0 {
-			break
-		}
+	for hub.ListenerCount() != 0 {
 		select {
 		case <-deadline:
 			t.Fatal("slow listener was never evicted")
