@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -44,6 +45,13 @@ func run() error {
 	}
 	slog.Info("database connected")
 
+	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer migrateCancel()
+	if err := persistence.Migrate(migrateCtx, db); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	slog.Info("migrations applied")
+
 	userRepo := persistence.NewUserRepository(db)
 	streamRepo := persistence.NewStreamRepository(db)
 	trackRepo := persistence.NewTrackRepository(db)
@@ -63,6 +71,7 @@ func run() error {
 	slog.Info("file storage ready", "path", cfg.StoragePath)
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
+	userUC := usecase.NewUserUseCase(userRepo)
 	streamUC := usecase.NewStreamUseCase(streamRepo, registry)
 	trackUC := usecase.NewTrackUseCase(trackRepo, fileStore)
 	adminUC := usecase.NewAdminUseCase(userRepo)
@@ -70,6 +79,7 @@ func run() error {
 
 	handlers := router.Handlers{
 		Auth:     handler.NewAuthHandler(authUC),
+		User:     handler.NewUserHandler(userUC),
 		Stream:   handler.NewStreamHandler(streamUC),
 		Track:    handler.NewTrackHandler(trackUC),
 		Admin:    handler.NewAdminHandler(adminUC),

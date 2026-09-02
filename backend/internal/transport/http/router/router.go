@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
 	"github.com/streampulse/backend/internal/transport/http/handler"
 	"github.com/streampulse/backend/internal/transport/http/middleware"
@@ -13,6 +14,7 @@ import (
 
 type Handlers struct {
 	Auth     *handler.AuthHandler
+	User     *handler.UserHandler
 	Stream   *handler.StreamHandler
 	Track    *handler.TrackHandler
 	Admin    *handler.AdminHandler
@@ -31,6 +33,12 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/register", h.Auth.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.Auth.Login)
 	mux.Handle("POST /api/v1/auth/refresh", authed(http.HandlerFunc(h.Auth.Refresh)))
+
+	// Account endpoints (ticket Y2) — the id always comes from the JWT, never
+	// from the path, so there is no id to tamper with.
+	mux.Handle("GET /api/v1/users/me", authed(http.HandlerFunc(h.User.Me)))
+	mux.Handle("GET /api/v1/users/me/data", authed(http.HandlerFunc(h.User.ExportData)))
+	mux.Handle("DELETE /api/v1/users/me", authed(http.HandlerFunc(h.User.DeleteMe)))
 
 	// Streams — browsing and listening are public; creating, broadcasting
 	// and deleting require an account (and ownership, enforced in the use
@@ -87,5 +95,11 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 		mux.Handle("PUT /api/v1/playlists/{id}/tracks/order", protected(h.Playlist.Reorder))
 	}
 
-	return mux
+	// Open scrape endpoint for local/docker-compose Prometheus. Not
+	// authenticated — acceptable for now since nothing here is deployed
+	// publicly yet (ticket K3); restricting /metrics at the network level
+	// or behind an auth token is a hardening item for ticket S3.
+	mux.Handle("GET /metrics", promhttp.Handler())
+
+	return middleware.Metrics(mux)
 }
