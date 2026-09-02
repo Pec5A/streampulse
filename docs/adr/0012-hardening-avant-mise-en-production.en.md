@@ -23,7 +23,12 @@ Preflights are answered by the middleware rather than passed down: the mux retur
 ### Rate limiting: in-memory, per IP, owned as such
 20 requests/minute per IP on `/auth/*` (`AUTH_RATE_LIMIT_PER_MINUTE`). Deliberately **in-memory and per instance**: a shared limiter (Redis) is the right answer once there is more than one machine — with N instances the effective limit is N times this one. Choosing the simple version now is a trade-off, not an oversight: it removes the trivial attack today without adding an external dependency the project does not otherwise need.
 
-`X-Forwarded-For` is **not** used as the key: any client can send it, so keying on it would let an attacker mint a fresh quota per request by varying a header. Behind a TLS-terminating proxy the socket address is the proxy's, so the limit applies per proxy rather than per user — a real limitation, but a conservative one: it under-counts nobody.
+**Client identification goes through `TRUSTED_PROXY_HOPS`**, because the two naive options are wrong in opposite directions:
+
+- *Always use `RemoteAddr`.* Behind a TLS-terminating proxy — which every PaaS is — that address is the proxy's, identical for everybody. The quota then applies to **all users combined**: with a 20/min limit, the 21st login attempt of the minute fails no matter who makes it. An earlier version of this ADR called that "conservative" and claimed it "under-counts nobody". It was the opposite: pooling every client into one bucket **over-counts** each of them, and turns the protection into a self-inflicted denial of service the first time a few people sign in at once. Caught in review by @monkeyDkz.
+- *Always trust `X-Forwarded-For`.* Any client can send that header, so an attacker mints a fresh quota per request by varying it. The limiter becomes decorative.
+
+**Counting from the right** is what makes the header usable: an attacker can prepend entries but cannot remove the ones the infrastructure appends after theirs. Skipping exactly `TRUSTED_PROXY_HOPS` entries from the end therefore lands on the address the closest trusted proxy actually observed. The hop count is deployment configuration — 0 locally, 1 behind a single PaaS load balancer — and defaults to 0: a shared quota is bad, a forgeable one is worse.
 
 The table is swept on every request to forget quiet clients. Without that it grows by one entry per distinct IP that ever touched the service and never shrinks — the same unbounded-growth shape as the Prometheus label cardinality problem, reached from another direction.
 

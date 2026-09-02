@@ -29,6 +29,9 @@ type Options struct {
 	AllowedOrigins []string
 	MetricsToken   string
 	AuthRateLimit  int
+	// TrustedProxyHops decides where the real client address is read from.
+	// Getting it wrong pools every user into one quota — see middleware.clientIP.
+	TrustedProxyHops int
 }
 
 func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler {
@@ -41,7 +44,7 @@ func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler 
 	authed := middleware.RequireAuth(jwtManager)
 	// Credential stuffing is the attack this closes: bcrypt makes each attempt
 	// slow, nothing made them few.
-	authLimit := middleware.RateLimit(o.AuthRateLimit)
+	authLimit := middleware.RateLimit(o.AuthRateLimit, o.TrustedProxyHops)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

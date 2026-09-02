@@ -3,12 +3,13 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
 
 func rateRig(perMinute int) http.Handler {
-	return RateLimit(perMinute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return RateLimit(perMinute, 0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 }
@@ -106,5 +107,88 @@ func TestRateLimit_ForgetsQuietClients(t *testing.T) {
 	l.allow("late", base.Add(5*time.Minute))
 	if len(l.hits) != 1 {
 		t.Errorf("map holds %d clients long after their window; want only the recent one", len(l.hits))
+	}
+}
+
+// The tests below cover the finding that made this configurable: keying on
+// RemoteAddr behind a load balancer gives every user the *same* key, so a
+// 20/min limit becomes 20/min for the whole service — a self-inflicted denial
+// of service the first time a few people sign in at once.
+
+func TestRateLimit_BehindAProxyCountsRealClients(t *testing.T) {
+	h := RateLimit(2, 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Every request arrives from the same proxy socket; only the forwarded
+	// header distinguishes the callers.
+	send := func(realIP string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "10.0.0.1:443" // the load balancer
+		req.Header.Set("X-Forwarded-For", realIP)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < 2; i++ {
+		if got := send("203.0.113.7"); got != http.StatusOK {
+			t.Fatalf("warm-up %d = %d", i, got)
+		}
+	}
+	if got := send("203.0.113.7"); got != http.StatusTooManyRequests {
+		t.Errorf("third request from the same client = %d, want 429", got)
+	}
+	if got := send("198.51.100.4"); got != http.StatusOK {
+		t.Errorf("a different client behind the same proxy got %d — the quota is pooled", got)
+	}
+}
+
+func TestRateLimit_IgnoresAForgedForwardedHeaderWhenNotBehindAProxy(t *testing.T) {
+	// hops=0 is the default. A client that invents X-Forwarded-For must not
+	// get a fresh quota out of it.
+	h := RateLimit(2, 0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	send := func(claimed string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "203.0.113.7:54321"
+		req.Header.Set("X-Forwarded-For", claimed)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < 2; i++ {
+		_ = send("1.1.1." + strconv.Itoa(i))
+	}
+	if got := send("9.9.9.9"); got != http.StatusTooManyRequests {
+		t.Errorf("a forged header bought a fresh quota (got %d, want 429)", got)
+	}
+}
+
+func TestRateLimit_ForgedEntriesPrependedToARealChainAreIgnored(t *testing.T) {
+	// The reason for counting from the right: an attacker can prepend entries
+	// but cannot remove the one the proxy appends after theirs.
+	h := RateLimit(2, 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	send := func(forged string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "10.0.0.1:443"
+		// The attacker sends "forged"; the proxy appends what it really saw.
+		req.Header.Set("X-Forwarded-For", forged+", 203.0.113.7")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < 2; i++ {
+		_ = send("1.1.1." + strconv.Itoa(i))
+	}
+	if got := send("9.9.9.9"); got != http.StatusTooManyRequests {
+		t.Errorf("prepended entries changed the key (got %d, want 429)", got)
 	}
 }

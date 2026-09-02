@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,7 +21,7 @@ import (
 // version now is a trade-off, not an oversight: it removes the trivial attack
 // today without adding an external dependency the project does not otherwise
 // need. The day a second instance exists, this comment is the reminder.
-func RateLimit(perMinute int) func(http.Handler) http.Handler {
+func RateLimit(perMinute, trustedProxyHops int) func(http.Handler) http.Handler {
 	if perMinute <= 0 {
 		// 0 disables the limit — used by tests and by local development,
 		// where locking yourself out of your own API is the likelier failure.
@@ -35,7 +36,7 @@ func RateLimit(perMinute int) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(r)
+			ip := clientIP(r, trustedProxyHops)
 			if !l.allow(ip, time.Now()) {
 				// Retry-After lets a well-behaved client back off instead of
 				// hammering, and tells an honest user this is temporary.
@@ -100,16 +101,47 @@ func (l *limiter) sweep(cutoff time.Time) {
 	}
 }
 
-// clientIP prefers the socket address and falls back to nothing else.
+// clientIP identifies the caller, counting back trustedProxyHops entries from
+// the right of X-Forwarded-For.
 //
-// X-Forwarded-For is NOT trusted here: any client can send it, so keying the
-// limiter on it would let an attacker mint a fresh quota per request by
-// varying a header. Behind a proxy that terminates TLS (Fly does), the socket
-// address is the proxy's, which means the limit applies per proxy rather than
-// per user — a real limitation, but a conservative one: it under-counts
-// nobody. Trusting the header requires knowing the proxy's address, which is
-// deployment configuration this project does not have yet.
-func clientIP(r *http.Request) string {
+// The naive options are both wrong, in opposite directions:
+//
+//   - Always use RemoteAddr. Behind a proxy that terminates TLS — which every
+//     PaaS does — that address is the proxy's, identical for everybody. The
+//     quota then applies to all users *combined*: with a limit of 20/min, the
+//     21st login attempt of the minute fails no matter who makes it. An
+//     earlier version of this file claimed that was "conservative" and
+//     "under-counts nobody". That was backwards: pooling every client into one
+//     bucket over-counts each of them, and turns the protection into a
+//     self-inflicted denial of service the first time a few people sign in at
+//     once.
+//   - Always trust X-Forwarded-For. Any client can send that header, so an
+//     attacker mints a fresh quota per request by varying it. The limiter
+//     becomes decorative.
+//
+// Counting from the *right* is what makes the header usable. An attacker can
+// prepend entries, but cannot remove the ones the infrastructure appends after
+// theirs. Skipping exactly trustedProxyHops entries from the end therefore
+// lands on the address the closest trusted proxy actually observed.
+//
+// The hop count is deployment configuration, not a guess: 0 when the process
+// is directly exposed (local, docker compose), 1 behind a single PaaS load
+// balancer. Defaulting to 0 keeps the safe behaviour when it is unset — a
+// shared quota is bad, a forgeable one is worse.
+func clientIP(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops > 0 {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			// The rightmost entry was appended by the closest proxy, so index
+			// len-hops is the address that proxy saw.
+			if i := len(parts) - trustedProxyHops; i >= 0 && i < len(parts) {
+				if ip := strings.TrimSpace(parts[i]); ip != "" {
+					return ip
+				}
+			}
+		}
+	}
+
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

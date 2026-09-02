@@ -28,6 +28,11 @@ type Config struct {
 	// AuthRateLimit is the number of requests per minute allowed per client
 	// IP on the authentication endpoints. 0 disables the limit.
 	AuthRateLimit int
+	// TrustedProxyHops is how many reverse proxies sit in front of the
+	// process. 0 when directly exposed, 1 behind a single PaaS load balancer.
+	// It decides how far back in X-Forwarded-For the real client is — see
+	// middleware.clientIP for why guessing is not an option.
+	TrustedProxyHops int
 
 	// --- Tracing (OpenTelemetry) ---
 
@@ -81,6 +86,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("AUTH_RATE_LIMIT_PER_MINUTE must be a non-negative integer")
 	}
 	cfg.AuthRateLimit = limit
+
+	hops, err := strconv.Atoi(getEnv("TRUSTED_PROXY_HOPS", "0"))
+	if err != nil || hops < 0 {
+		return nil, fmt.Errorf("TRUSTED_PROXY_HOPS must be a non-negative integer")
+	}
+	cfg.TrustedProxyHops = hops
 
 	// Refuse to start rather than expose the scrape endpoint. /metrics leaks
 	// the route table, traffic volumes and internal topology; the brief names

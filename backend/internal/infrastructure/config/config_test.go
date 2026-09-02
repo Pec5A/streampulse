@@ -252,3 +252,34 @@ func TestLoad_AuthRateLimit(t *testing.T) {
 		t.Error("Load() accepted a negative rate limit")
 	}
 }
+
+func TestLoad_TrustedProxyHops(t *testing.T) {
+	// Defaults to 0: when unset, the limiter keys on the socket address. A
+	// shared quota is bad, a forgeable one is worse.
+	baseEnv(t)
+	t.Setenv("TRUSTED_PROXY_HOPS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TrustedProxyHops != 0 {
+		t.Errorf("default TrustedProxyHops = %d, want 0", cfg.TrustedProxyHops)
+	}
+
+	baseEnv(t)
+	t.Setenv("TRUSTED_PROXY_HOPS", "1")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TrustedProxyHops != 1 {
+		t.Errorf("TrustedProxyHops = %d, want 1", cfg.TrustedProxyHops)
+	}
+
+	baseEnv(t)
+	t.Setenv("TRUSTED_PROXY_HOPS", "-1")
+	if _, err := Load(); err == nil {
+		t.Error("Load() accepted a negative hop count")
+	}
+}
