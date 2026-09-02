@@ -29,10 +29,19 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+      - name: Lint (golangci-lint)
+        # Remplace l'étape staticcheck autonome : golangci-lint fait tourner
+        # staticcheck en plus d'errcheck, govet, ineffassign et unused, sous
+        # une seule configuration versionnée (backend/.golangci.yml).
+        #
+        # gosec reste une étape séparée juste en dessous : golangci-lint sait
+        # l'exécuter, mais avec un filtrage de sévérité différent, et affaiblir
+        # une vérification de sécurité pour économiser une étape est un mauvais
+        # échange.
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: backend
 
       - name: Security scan (gosec)
         run: |
