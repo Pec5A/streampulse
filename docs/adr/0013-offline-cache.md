@@ -1,4 +1,4 @@
-# 0005 — Mode offline : cache local des playlists (ticket S4, bonus)
+# 0013 — Mode offline : cache local des playlists (ticket S4, bonus)
 
 ## Statut
 Accepté
