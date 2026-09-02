@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 
@@ -19,12 +20,23 @@ import (
 //
 // Only the level differs per environment: debug locally, info elsewhere.
 func NewLogger(environment string) *slog.Logger {
+	return NewLoggerTo(os.Stdout, environment)
+}
+
+// NewLoggerTo is NewLogger with the destination chosen by the caller.
+//
+// Exported so the correlation can be proven end to end — a test can run a
+// request through the real middleware stack and read back the exact bytes the
+// process would have written. Asserting the mechanism in isolation is not the
+// same claim: the review that prompted the access log found precisely that
+// case, a correlation handler that worked and had almost nothing to correlate.
+func NewLoggerTo(w io.Writer, environment string) *slog.Logger {
 	level := slog.LevelInfo
 	if environment == "development" {
 		level = slog.LevelDebug
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
 	return slog.New(&traceHandler{Handler: handler})
 }
 

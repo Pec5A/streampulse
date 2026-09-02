@@ -12,7 +12,18 @@ import (
 	"github.com/streampulse/backend/internal/transport/http/middleware"
 )
 
+// BuildInfo identifies the running binary. Reported by /health so that
+// "which version is actually deployed" is answerable from outside the
+// cluster — a rollback decision cannot wait on somebody SSHing in to read
+// an image tag.
+type BuildInfo struct {
+	Version string
+	Commit  string
+}
+
 type Handlers struct {
+	Build BuildInfo
+
 	Auth     *handler.AuthHandler
 	User     *handler.UserHandler
 	Stream   *handler.StreamHandler
@@ -48,7 +59,17 @@ func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler 
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		body := map[string]string{"status": "ok"}
+		// Omitted rather than reported empty when the binary was not built
+		// through the release pipeline: an empty version string in a probe
+		// response is worse than no field, it looks like a deployed unknown.
+		if h.Build.Version != "" {
+			body["version"] = h.Build.Version
+		}
+		if h.Build.Commit != "" {
+			body["commit"] = h.Build.Commit
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 
 	mux.Handle("POST /api/v1/auth/register", authLimit(http.HandlerFunc(h.Auth.Register)))
@@ -75,9 +96,12 @@ func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler 
 
 	// The WebSocket publish route is the one place that also accepts the JWT
 	// as a query parameter — browsers cannot set headers on an upgrade.
-	// See middleware.RequireAuthWS for the trade-off.
+	// See middleware.RequireAuthWS for the trade-off. Chat has the same
+	// browser constraint, so it uses the same middleware.
 	mux.Handle("GET /api/v1/streams/{id}/publish/ws",
 		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Stream.PublishWS)))
+	mux.Handle("GET /api/v1/streams/{id}/chat",
+		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Stream.Chat)))
 
 	// Admin area (ticket S2) — every route requires a valid JWT AND the admin
 	// role (RequireAuth then RequireAdmin).
@@ -112,15 +136,21 @@ func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler 
 	// mandatory outside development.
 	mux.Handle("GET /metrics", middleware.RequireMetricsToken(o.MetricsToken)(promhttp.Handler()))
 
-	// Order matters, outermost first:
-	//   Tracing          the span must cover everything, including rejections
-	//   SecurityHeaders  set before any handler can start writing a body
-	//   Metrics          so a preflight or a 429 still shows up in the counters
-	//   CORS             answers preflights itself; the mux would 405 them
+	// L'ordre compte, du plus externe au plus interne :
+	//   Tracing          le span doit couvrir toute la requête, y compris les
+	//                    rejets, et le contexte qu'il injecte doit atteindre
+	//                    tout ce qui est en dessous — AccessLog en premier,
+	//                    qui sans lui n'aurait pas de trace_id à estampiller
+	//   SecurityHeaders  posés avant qu'un handler puisse écrire un corps
+	//   AccessLog        au-dessus de tout ce dont il rapporte le statut
+	//   Metrics          pour qu'un préflight ou un 429 compte quand même
+	//   CORS             répond lui-même aux préflights ; le mux les 405-erait
 	return middleware.Tracing(
 		middleware.SecurityHeaders(o.Environment)(
-			middleware.Metrics(
-				middleware.CORS(o.AllowedOrigins)(mux),
+			middleware.AccessLog(
+				middleware.Metrics(
+					middleware.CORS(o.AllowedOrigins)(mux),
+				),
 			),
 		),
 	)
