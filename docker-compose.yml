@@ -6,11 +6,19 @@ services:
       DATABASE_URL: postgres://streampulse:streampulse@postgres:5432/streampulse?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-32-chars-min}
       ENVIRONMENT: development
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_SERVICE_NAME: streampulse-api
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      # Every trace kept locally: the stack exists to be inspected, and
+      # sampling would make a demo request disappear at random.
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
@@ -32,6 +40,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.1
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./deployments/otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - tempo
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./deployments/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200" # Tempo API, queried by Grafana
 
   prometheus:
     image: prom/prometheus:latest
@@ -65,8 +93,10 @@ services:
       - ./deployments/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
+      - tempo
 
 volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  tempo_data:
