@@ -17,6 +17,34 @@ Le statut est relatif à `main` ; les fonctionnalités encore en PR ouverte sont
 - **Playlists** — CRUD + réordonnancement transactionnel des pistes, + cache offline. *En review (PR #16, #19).*
 - **RGPD** — export des données personnelles & suppression de compte. *En review (PR #14).*
 - **Streaming live & upload audio** — la fonctionnalité phare de la plateforme. *En cours dans des PR ouvertes (#22, #23) ; pas encore sur `main`.*
+- **Observabilité** — métriques Prometheus (métier / technique) + dashboard Grafana, traces distribuées OpenTelemetry et logs JSON corrélés. *En review (PR #14, #27).*
+
+## Observabilité
+
+Les trois signaux, et surtout le lien entre eux : une métrique dit *qu'il y a* un
+problème, une trace dit *où*, un log dit *quoi*.
+
+```bash
+JWT_SECRET=change-me-to-at-least-32-characters docker compose up -d --build
+curl localhost:8080/health
+```
+
+| Service | URL | Rôle |
+|---|---|---|
+| API | http://localhost:8080 | l'application |
+| Métriques | http://localhost:8080/metrics | exposition Prometheus |
+| Prometheus | http://localhost:9090 | collecte et alertes |
+| Grafana | http://localhost:3000 (`admin` / `admin`) | dashboards, datasources Prometheus + Tempo provisionnées |
+| Tempo | http://localhost:3200 | stockage des traces |
+
+Les logs sortent en JSON sur stdout, chaque ligne émise dans une requête portant
+`trace_id` et `span_id` : le même `trace_id` ouvre la trace correspondante dans
+Grafana. Les spans sont nommés d'après le *template* de route
+(`GET /api/v1/playlists/{id}`), jamais l'URL brute — voir
+[`docs/adr/0011-otel-tracing-and-json-logs.md`](docs/adr/0011-otel-tracing-and-json-logs.md).
+
+Le tracing est **désactivé par défaut** hors compose : sans
+`OTEL_EXPORTER_OTLP_ENDPOINT`, l'API démarre normalement avec un simple Postgres.
 
 ## Démarrage
 ```bash
