@@ -255,10 +255,10 @@ func TestChatRegistry_OpenGetClose(t *testing.T) {
 	}
 }
 
-func TestChatRegistry_OpenReplacesAndClosesAnExistingRoom(t *testing.T) {
-	// Mirrors Registry.Open's reconnect semantics: opening a room for a
-	// stream id that's already live closes the previous room so its
-	// participants are released, not stranded.
+func TestChatRegistry_OpenKeepsParticipantsAcrossBroadcasterReconnect(t *testing.T) {
+	// StartLive calls Open on every (re)connection of the broadcaster. A chat
+	// room must survive that: unlike the audio hub there is no privileged
+	// publisher to recycle, and a closed room silently drops every participant.
 	reg := NewChatRegistry()
 
 	first := reg.Open(context.Background(), "s1")
@@ -267,23 +267,40 @@ func TestChatRegistry_OpenReplacesAndClosesAnExistingRoom(t *testing.T) {
 		t.Fatalf("join first: %v", err)
 	}
 
-	second := reg.Open(context.Background(), "s1")
-	if second == first {
-		t.Fatal("Open() on an already-live stream returned the same hub")
+	second := reg.Open(context.Background(), "s1") // broadcaster reconnects
+	if second != first {
+		t.Fatal("Open() on an already-live stream returned a new hub, evicting the room")
 	}
 
 	select {
 	case _, ok := <-ch:
-		if ok {
-			t.Error("participant on the replaced hub received a message instead of a close")
+		if !ok {
+			t.Error("participant was disconnected by the broadcaster reconnect")
 		}
-	case <-time.After(2 * time.Second):
-		t.Error("replaced hub was never closed")
+	case <-time.After(200 * time.Millisecond):
+		// No traffic and no close: the participant is still in the room.
 	}
 
 	got, err := reg.Get("s1")
-	if err != nil || got != second {
-		t.Fatalf("Get() = %v, %v, want the second hub", got, err)
+	if err != nil || got != first {
+		t.Fatalf("Get() = %v, %v, want the original hub", got, err)
+	}
+}
+
+func TestChatRegistry_CloseThenOpenStartsAFreshRoom(t *testing.T) {
+	// Close is the only way a room ends; reopening after it must not hand back
+	// the closed hub, whose Join would fail with ErrChatClosed forever.
+	reg := NewChatRegistry()
+
+	first := reg.Open(context.Background(), "s1")
+	reg.Close("s1")
+
+	second := reg.Open(context.Background(), "s1")
+	if second == first {
+		t.Fatal("Open() after Close() returned the closed hub")
+	}
+	if _, _, _, err := second.Join(); err != nil {
+		t.Fatalf("join the reopened room: %v", err)
 	}
 }
 

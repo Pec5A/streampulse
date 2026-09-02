@@ -188,17 +188,23 @@ func NewChatRegistry() *ChatRegistry {
 	return &ChatRegistry{hubs: make(map[string]*ChatHub)}
 }
 
-// Open starts a chat room for streamID. If a room already existed — a
-// broadcaster reconnecting after a dropped connection, mirroring
-// Registry.Open — the previous one is closed first so its participants are
-// released instead of being stranded on a room nobody will ever publish a
-// stream-end event to.
+// Open returns the chat room for streamID, creating it on first call.
+//
+// Deliberately NOT symmetric with Registry.Open (audio). The audio hub is fed
+// by exactly one publisher connection, so recycling it on reconnect is what
+// keeps listeners attached to a hub somebody is actually feeding. A chat room
+// has no privileged connection — every participant is equal — and StartLive
+// runs again on every (re)connection of the broadcaster, which mobile networks
+// trigger constantly. Recycling here would eject the whole conversation on a
+// two-second drop, and chat clients have no reconnect logic to recover from it.
+// The room therefore lives as long as the stream is live, across reconnects;
+// only StopLive and Delete close it.
 func (r *ChatRegistry) Open(ctx context.Context, streamID string) *ChatHub {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if existing, ok := r.hubs[streamID]; ok {
-		existing.Close()
+		return existing
 	}
 	h := NewChatHub(ctx, streamID)
 	r.hubs[streamID] = h
