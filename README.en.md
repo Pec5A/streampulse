@@ -43,8 +43,12 @@ GitHub Actions: Go quality (vet, race tests, coverage), Flutter (analyze, test),
 | Document | Contents |
 |---|---|
 | [`docs/cahier-des-charges.en.md`](docs/cahier-des-charges.en.md) | **Specification**: scope, user stories, requirements, security schema, accepted limits |
+| [`docs/diagrams/`](docs/diagrams/README.en.md) | Mermaid diagrams: components, data model, sequences (streaming, tracing), states, deployment |
+| [`docs/PLAN_DE_TESTS.en.md`](docs/PLAN_DE_TESTS.en.md) | Test strategy, measured coverage, identified gaps |
+| [`docs/CAHIER_DE_RECETTE.en.md`](docs/CAHIER_DE_RECETTE.en.md) | Functional expectations per role, and the test verifying each |
+| [`docs/TEST_DE_CHARGE.en.md`](docs/TEST_DE_CHARGE.en.md) | Load measurements: 1000 listeners on one stream, 100 concurrent streams, CPU cost |
 | [`docs/adr/`](docs/adr/) | Architecture decisions and the alternatives rejected (FR/EN) |
-| [`docs/runbooks/`](docs/runbooks/) | Incident response and production deployment (FR/EN) |
+| [`docs/runbooks/`](docs/runbooks/) | Incident response and production deployment procedure (FR/EN) |
 | [`docs/rgpd/`](docs/rgpd/), [`docs/accessibility/`](docs/accessibility/) | Processing register, accessibility policy |
 
 ## Team & workflow

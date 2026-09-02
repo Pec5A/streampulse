@@ -27,6 +27,15 @@ class TrackModel extends Equatable {
   final String sourceUrl;
   final int position;
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'artist': artist,
+        'duration_seconds': durationSeconds,
+        'source_url': sourceUrl,
+        'position': position,
+      };
+
   @override
   List<Object?> get props => [id, title, artist, durationSeconds, sourceUrl, position];
 }
@@ -69,6 +78,15 @@ class PlaylistModel extends Equatable {
         isPublic: isPublic,
         tracks: tracks ?? this.tracks,
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'owner_id': ownerId,
+        'name': name,
+        'description': description,
+        'is_public': isPublic,
+        'tracks': tracks.map((t) => t.toJson()).toList(),
+      };
 
   @override
   List<Object?> get props => [id, ownerId, name, description, isPublic, tracks];

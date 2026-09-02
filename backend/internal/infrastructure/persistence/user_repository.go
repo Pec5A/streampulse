@@ -65,12 +65,18 @@ func (r *UserRepository) Update(ctx context.Context, u *entity.User) error {
 	return checkRowsAffected(res)
 }
 
+// Delete removes the user row. Idempotent by design: deleting an id that no
+// longer exists still leaves the system in the desired end state (the user
+// is gone), so it is not an error — unlike Update, where a no-op write on a
+// missing row usually signals a caller bug. This matters concretely for the
+// RGPD erasure endpoint (UserUseCase.DeleteMe): the caller's JWT stays valid
+// for its full TTL after the account row is gone, so a retried DELETE call
+// (double tap, network retry) must not surface as a 500.
 func (r *UserRepository) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
-	if err != nil {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
-	return checkRowsAffected(res)
+	return nil
 }
 
 func (r *UserRepository) scanOne(row *sql.Row) (*entity.User, error) {
