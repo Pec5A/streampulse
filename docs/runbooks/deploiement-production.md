@@ -21,8 +21,12 @@ flyctl apps create streampulse-api
 flyctl postgres create --name streampulse-db --region cdg
 flyctl postgres attach streampulse-db --app streampulse-api   # injecte DATABASE_URL
 
-# 2. Le secret applicatif (jamais dans fly.toml, qui est versionné)
+# 2. Les secrets applicatifs (jamais dans fly.toml, qui est versionné)
 flyctl secrets set JWT_SECRET="$(openssl rand -base64 48)" --app streampulse-api
+# METRICS_TOKEN est OBLIGATOIRE en production : sans lui l'API refuse de
+# démarrer, plutôt que d'exposer /metrics (table des routes, volumes,
+# latences, profil mémoire) sur Internet.
+flyctl secrets set METRICS_TOKEN="$(openssl rand -base64 32)" --app streampulse-api
 
 # 3. Donner à la CI de quoi déployer
 flyctl tokens create deploy --app streampulse-api          # → coller dans le secret GitHub
@@ -65,7 +69,9 @@ Le rollback est un **redéploiement d'une image antérieure**, pas un `git rever
 |---|---|---|
 | Job `deploy` ignoré | `FLY_APP` non définie | `gh variable set FLY_APP` |
 | `Error: no access token available` | `FLY_API_TOKEN` absent ou expiré | régénérer via `flyctl tokens create deploy` |
-| Health check en échec au déploiement | `DATABASE_URL` ou `JWT_SECRET` manquant | `flyctl secrets list --app streampulse-api` |
+| Health check en échec au déploiement | `DATABASE_URL`, `JWT_SECRET` ou `METRICS_TOKEN` manquant | `flyctl secrets list --app streampulse-api` |
+| Logs : « METRICS_TOKEN is required » | le secret n'a jamais été posé | voir §1 étape 2 — refus de démarrer volontaire |
+| L'app web ne peut pas appeler l'API | `CORS_ALLOWED_ORIGINS` vide dans `fly.toml` | y mettre l'origine exacte du client web, puis redéployer |
 | `/health` sans `version` | image construite hors pipeline | redéployer depuis un tag `sha-…` de GHCR |
 | Prod OK mais aucune trace | `OTEL_EXPORTER_OTLP_ENDPOINT` vide (défaut) | pointer un collecteur joignable depuis Fly |
 
@@ -88,6 +94,7 @@ flyctl postgres create --name streampulse-db --region cdg
 flyctl postgres attach streampulse-db --app streampulse-api   # injects DATABASE_URL
 
 flyctl secrets set JWT_SECRET="$(openssl rand -base64 48)" --app streampulse-api
+flyctl secrets set METRICS_TOKEN="$(openssl rand -base64 32)" --app streampulse-api
 
 flyctl tokens create deploy --app streampulse-api
 gh secret set FLY_API_TOKEN --repo Pec5A/streampulse
@@ -127,6 +134,8 @@ Rollback is **redeploying an earlier image**, not a `git revert`: the previous c
 |---|---|---|
 | `deploy` job skipped | `FLY_APP` unset | `gh variable set FLY_APP` |
 | `Error: no access token available` | `FLY_API_TOKEN` missing or expired | regenerate with `flyctl tokens create deploy` |
-| Health check fails on deploy | `DATABASE_URL` or `JWT_SECRET` missing | `flyctl secrets list --app streampulse-api` |
+| Health check fails on deploy | `DATABASE_URL`, `JWT_SECRET` or `METRICS_TOKEN` missing | `flyctl secrets list --app streampulse-api` |
+| Logs say "METRICS_TOKEN is required" | the secret was never set | see §1 step 2 — the refusal to start is deliberate |
+| The web app cannot call the API | `CORS_ALLOWED_ORIGINS` empty in `fly.toml` | set the web client's exact origin, then redeploy |
 | `/health` has no `version` | image built outside the pipeline | redeploy from a GHCR `sha-…` tag |
 | Production fine but no traces | `OTEL_EXPORTER_OTLP_ENDPOINT` empty (default) | point at a collector reachable from Fly |
