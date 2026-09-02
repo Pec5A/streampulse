@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,6 +44,13 @@ func run() error {
 	}
 	slog.Info("database connected")
 
+	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer migrateCancel()
+	if err := persistence.Migrate(migrateCtx, db); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	slog.Info("migrations applied")
+
 	userRepo := persistence.NewUserRepository(db)
 	streamRepo := persistence.NewStreamRepository(db)
 	playlistRepo := persistence.NewPlaylistRepository(db)
@@ -60,12 +68,14 @@ func run() error {
 	defer chatRegistry.CloseAll()
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
+	userUC := usecase.NewUserUseCase(userRepo)
 	streamUC := usecase.NewStreamUseCase(streamRepo, userRepo, registry, chatRegistry)
 	adminUC := usecase.NewAdminUseCase(userRepo)
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
 	handlers := router.Handlers{
 		Auth:     handler.NewAuthHandler(authUC),
+		User:     handler.NewUserHandler(userUC),
 		Stream:   handler.NewStreamHandler(streamUC),
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
