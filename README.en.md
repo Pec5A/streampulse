@@ -38,6 +38,15 @@ cd mobile && flutter analyze && flutter test
 ```
 GitHub Actions: Go quality (vet, race tests, coverage), Flutter (analyze, test), and security scanning (gitleaks + trivy + govulncheck).
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [`docs/cahier-des-charges.en.md`](docs/cahier-des-charges.en.md) | **Specification**: scope, user stories, requirements, security schema, accepted limits |
+| [`docs/adr/`](docs/adr/) | Architecture decisions and the alternatives rejected (FR/EN) |
+| [`docs/runbooks/`](docs/runbooks/) | Incident response and production deployment (FR/EN) |
+| [`docs/rgpd/`](docs/rgpd/), [`docs/accessibility/`](docs/accessibility/) | Processing register, accessibility policy |
+
 ## Team & workflow
 SamyZ ([@SamyNikaia](https://github.com/SamyNikaia)), Yassir ([@JASSBR](https://github.com/JASSBR)), KaysZ ([@monkeyDkz](https://github.com/monkeyDkz)).
 **Signed commits required** ("Verified" badge). One PR per ticket, cross-review, no self-merge. See [`docs/team/`](docs/team/) and [`docs/team/branch-protection.md`](docs/team/branch-protection.md).
