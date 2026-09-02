@@ -10,3 +10,18 @@ scrape_configs:
     static_configs:
       - targets: ["api:8080"]
     metrics_path: /metrics
+    # /metrics is no longer open: it publishes the route table, per-route
+    # volumes, latency distributions and the process memory profile. The API
+    # refuses to start outside development without this token, so the scraper
+    # has to present it — including here, where the point is that the local
+    # stack runs the same path as production.
+    #
+    # The value is literal on purpose: Prometheus does NOT expand environment
+    # variables in its configuration, so a "${METRICS_TOKEN}" here would be
+    # sent verbatim as the token and every scrape would 404 — silently, since
+    # a failing scrape only shows up as a gap in the graphs. It matches the
+    # compose default and is a local development value, never a real secret.
+    # A deployment supplies its own through `credentials_file`.
+    authorization:
+      type: Bearer
+      credentials: local-scrape-token

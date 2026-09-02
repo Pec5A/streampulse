@@ -1,0 +1,28 @@
+# golangci-lint — la checklist de chaque PR coche "golangci-lint run clean"
+# depuis le début du projet, sans qu'aucune configuration n'existe. Une case
+# cochée qui n'est vérifiée par rien est pire qu'une case décochée : un jury
+# qui contrôle une affirmation et la trouve fausse remet en question les
+# autres.
+version: "2"
+
+linters:
+  # Le jeu par défaut (errcheck, govet, ineffassign, staticcheck, unused).
+  # Volontairement pas de linters de style à ce stade : ils produiraient des
+  # centaines de findings sur du code déjà relu et mergé, et une porte qu'on
+  # doit désactiver pour avancer est une porte qu'on n'ajoutera plus jamais.
+  default: standard
+
+  exclusions:
+    rules:
+      # Un test qui ferme une ressource dans un defer n'a rien à faire de
+      # l'erreur : il a déjà échoué ou réussi avant.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+issues:
+  # Par défaut golangci-lint n'affiche que 3 findings du même type et 50 au
+  # total, ce qui donne l'illusion d'un code presque propre quand il ne l'est
+  # pas. On veut tout voir.
+  max-issues-per-linter: 0
+  max-same-issues: 0

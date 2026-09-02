@@ -4,5 +4,9 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
+    # Pinned: Grafana generates a random uid otherwise, and anything that
+    # references this datasource by uid (Tempo's tracesToMetrics link, a
+    # dashboard JSON) silently stops resolving on the next recreate.
+    uid: prometheus
     url: http://prometheus:9090
     isDefault: true

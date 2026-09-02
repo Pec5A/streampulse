@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"github.com/google/uuid"
 	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
@@ -32,6 +37,17 @@ const (
 	// maxWSFrameBytes caps a single WebSocket audio frame. Without a limit a
 	// malicious client could ask us to buffer an arbitrarily large frame.
 	maxWSFrameBytes = 1 << 20 // 1 MiB
+
+	// maxChatMessageLen bounds a single chat message, in characters (not
+	// bytes — counted with utf8.RuneCountInString so a message full of
+	// multi-byte characters isn't cut short compared to an ASCII one).
+	maxChatMessageLen = 500
+
+	// maxChatFrameBytes caps a single incoming chat WebSocket frame. Chat
+	// payloads are tiny JSON objects; this exists only to stop a malicious
+	// client from asking us to buffer an arbitrarily large frame, mirroring
+	// maxWSFrameBytes's role for audio.
+	maxChatFrameBytes = 8 * 1024
 )
 
 type StreamHandler struct {
@@ -180,7 +196,7 @@ func (h *StreamHandler) pump(r *http.Request, hub *streaming.Hub, streamID strin
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				slog.Info("publish read ended", "stream_id", streamID, "err", readErr)
+				slog.InfoContext(r.Context(), "publish read ended", "stream_id", streamID, "err", readErr)
 			}
 			return published
 		}
@@ -210,7 +226,7 @@ func (h *StreamHandler) PublishWS(w http.ResponseWriter, r *http.Request) {
 		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
 	})
 	if err != nil {
-		slog.Error("websocket accept", "stream_id", streamID, "err", err)
+		slog.ErrorContext(r.Context(), "websocket accept", "stream_id", streamID, "err", err)
 		return
 	}
 	defer func() { _ = conn.CloseNow() }()
@@ -233,6 +249,117 @@ func (h *StreamHandler) PublishWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := hub.Publish(data); err != nil {
+			return
+		}
+	}
+}
+
+// Chat is a WebSocket endpoint for the live text chat that runs alongside a
+// stream's audio. Unlike PublishWS or Listen, this connection is
+// bidirectional — it carries the participant's own messages in and every
+// participant's messages out — so it runs a dedicated read goroutine
+// alongside the handler's own write loop.
+//
+// Open to any authenticated user, not just the broadcaster (see
+// StreamUseCase.JoinChat): chat only needs an identity to attribute
+// messages, the same way Listen needs none at all for audio. Accepts the
+// JWT as a query parameter for the same reason as PublishWS — the browser
+// WebSocket API cannot set headers on an upgrade — via RequireAuthWS.
+func (h *StreamHandler) Chat(w http.ResponseWriter, r *http.Request) {
+	userID, _ := middleware.UserID(r.Context())
+	streamID := r.PathValue("id")
+
+	// Authorise and resolve the display name before upgrading, so failures
+	// are still a readable HTTP response rather than an opaque socket close
+	// — same reasoning as PublishWS.
+	hub, username, err := h.uc.JoinChat(r.Context(), streamID, userID)
+	if err != nil {
+		writeStreamError(w, err)
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
+	})
+	if err != nil {
+		slog.Error("chat websocket accept", "stream_id", streamID, "err", err)
+		return
+	}
+	defer func() { _ = conn.CloseNow() }()
+	conn.SetReadLimit(maxChatFrameBytes)
+
+	_, incoming, leave, err := hub.Join()
+	if err != nil {
+		// The room closed between JoinChat's lookup and the upgrade above
+		// (the broadcaster just stopped) — tell the client instead of
+		// leaving them hanging on a socket that will never receive anything.
+		_ = conn.Close(websocket.StatusNormalClosure, "chat closed")
+		return
+	}
+	defer leave()
+
+	ctx := r.Context()
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		h.readChatMessages(ctx, conn, hub, streamID, userID, username)
+	}()
+
+	for {
+		select {
+		case msg, ok := <-incoming:
+			if !ok {
+				_ = conn.Close(websocket.StatusNormalClosure, "chat closed")
+				return
+			}
+			if err := wsjson.Write(ctx, conn, msg); err != nil {
+				return
+			}
+		case <-hub.Done():
+			_ = conn.Close(websocket.StatusNormalClosure, "chat closed")
+			return
+		case <-readDone:
+			// The read side ended: client disconnected, sent a close frame,
+			// or a read error occurred.
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// readChatMessages reads text frames from conn, validates them, and
+// publishes valid ones to hub as a ChatMessage attributed to the joined
+// participant — never to whatever a malicious client might put in the
+// payload, since userID/username come from the server-side JoinChat call,
+// not from the incoming frame. Runs until the connection errors or ctx ends.
+func (h *StreamHandler) readChatMessages(ctx context.Context, conn *websocket.Conn, hub *streaming.ChatHub, streamID, userID, username string) {
+	for {
+		var in dto.ChatIncoming
+		if err := wsjson.Read(ctx, conn, &in); err != nil {
+			return
+		}
+
+		text := strings.TrimSpace(in.Text)
+		switch {
+		case text == "":
+			continue
+		case utf8.RuneCountInString(text) > maxChatMessageLen:
+			_ = wsjson.Write(ctx, conn, dto.ChatErrorFrame{
+				Error: fmt.Sprintf("message must be at most %d characters", maxChatMessageLen),
+			})
+			continue
+		}
+
+		msg := streaming.ChatMessage{
+			ID:       uuid.NewString(),
+			StreamID: streamID,
+			UserID:   userID,
+			Username: username,
+			Text:     text,
+			SentAt:   time.Now(),
+		}
+		if err := hub.Publish(msg); err != nil {
 			return
 		}
 	}
@@ -293,7 +420,7 @@ func (h *StreamHandler) stopLive(ctx context.Context, streamID, userID, role str
 	defer cancel()
 
 	if err := h.uc.StopLive(stopCtx, streamID, userID, role); err != nil {
-		slog.Error("stop live stream", "stream_id", streamID, "err", err)
+		slog.ErrorContext(stopCtx, "stop live stream", "stream_id", streamID, "err", err)
 	}
 }
 

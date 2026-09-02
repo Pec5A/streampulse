@@ -28,7 +28,7 @@ func (r *UserRepository) ListUsers(ctx context.Context, offset, limit int) ([]en
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []entity.User
 	for rows.Next() {
@@ -48,7 +48,7 @@ func (r *UserRepository) CountUsersByRole(ctx context.Context) (map[entity.Role]
 	if err != nil {
 		return nil, fmt.Errorf("count users by role: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make(map[entity.Role]int)
 	for rows.Next() {

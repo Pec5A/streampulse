@@ -16,10 +16,19 @@ import (
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
 	"github.com/streampulse/backend/internal/infrastructure/config"
+	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/persistence"
 	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/handler"
 	"github.com/streampulse/backend/internal/transport/http/router"
+)
+
+// Overwritten at build time by the Dockerfile's -ldflags -X. Declared here
+// because -X on a symbol that does not exist is silently ignored: the build
+// looked stamped while every image reported nothing.
+var (
+	version = "dev"
+	commit  = "unknown"
 )
 
 func main() {
@@ -34,7 +43,33 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Installed as the default before anything else logs, so no line escapes
+	// in the stdlib's text format.
+	slog.SetDefault(observability.NewLogger(cfg.Environment))
 	slog.Info("config loaded", "env", cfg.Environment, "port", cfg.Port)
+
+	shutdownTracing, err := observability.InitTracing(context.Background(), observability.TracingConfig{
+		ServiceName:    cfg.ServiceName,
+		ServiceVersion: cfg.ServiceVersion,
+		Environment:    cfg.Environment,
+		Endpoint:       cfg.OTLPEndpoint,
+		SampleRatio:    cfg.TraceSampleRatio,
+	})
+	if err != nil {
+		return fmt.Errorf("init tracing: %w", err)
+	}
+	defer func() {
+		// Its own timeout, and deliberately not the request context: this runs
+		// after shutdown has already been signalled, so a context derived from
+		// it would be cancelled and the final batch of spans dropped.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(flushCtx); err != nil {
+			slog.Error("flush traces", "err", err)
+		}
+	}()
+	slog.Info("tracing initialised", "otlp_endpoint", cfg.OTLPEndpoint, "sample_ratio", cfg.TraceSampleRatio)
 
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer dbCancel()
@@ -58,24 +93,36 @@ func run() error {
 	hasher := auth.NewBcryptHasher()
 
 	// The streaming registry holds every live broadcast in memory for this
-	// process, so it is created once here and shared by all requests.
+	// process, so it is created once here and shared by all requests. The
+	// chat registry follows the exact same lifecycle, one room per live
+	// stream, opened and closed by StreamUseCase in lockstep with the audio
+	// hub — see StreamUseCase.StartLive/StopLive.
 	registry := streaming.NewRegistry()
 	defer registry.CloseAll()
+	chatRegistry := streaming.NewChatRegistry()
+	defer chatRegistry.CloseAll()
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
-	streamUC := usecase.NewStreamUseCase(streamRepo, registry)
+	streamUC := usecase.NewStreamUseCase(streamRepo, userRepo, registry, chatRegistry)
 	adminUC := usecase.NewAdminUseCase(userRepo)
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
 	handlers := router.Handlers{
+		Build:    router.BuildInfo{Version: version, Commit: commit},
 		Auth:     handler.NewAuthHandler(authUC),
 		User:     handler.NewUserHandler(userUC),
 		Stream:   handler.NewStreamHandler(streamUC),
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
 	}
-	mux := router.New(handlers, jwtManager)
+	mux := router.New(handlers, jwtManager, router.Options{
+		Environment:      cfg.Environment,
+		AllowedOrigins:   cfg.AllowedOrigins,
+		MetricsToken:     cfg.MetricsToken,
+		AuthRateLimit:    cfg.AuthRateLimit,
+		TrustedProxyHops: cfg.TrustedProxyHops,
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
