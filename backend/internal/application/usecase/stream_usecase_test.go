@@ -461,7 +461,7 @@ func TestStreamUseCase_GetAndList(t *testing.T) {
 
 func TestStreamUseCase_StartLiveOpensTheChatRoomTogetherWithTheHub(t *testing.T) {
 	uc, _, _, _, chats := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 
 	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
@@ -474,7 +474,7 @@ func TestStreamUseCase_StartLiveOpensTheChatRoomTogetherWithTheHub(t *testing.T)
 
 func TestStreamUseCase_StopLiveClosesTheChatRoomToo(t *testing.T) {
 	uc, _, _, _, chats := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
 	}
@@ -490,7 +490,7 @@ func TestStreamUseCase_StopLiveClosesTheChatRoomToo(t *testing.T) {
 
 func TestStreamUseCase_DeleteClosesTheChatRoomToo(t *testing.T) {
 	uc, _, _, _, chats := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
 	}
@@ -506,7 +506,7 @@ func TestStreamUseCase_DeleteClosesTheChatRoomToo(t *testing.T) {
 
 func TestStreamUseCase_JoinChatResolvesTheParticipantsUsername(t *testing.T) {
 	uc, _, users, _, _ := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
 	}
@@ -533,7 +533,7 @@ func TestStreamUseCase_JoinChatOnAnOfflineStream(t *testing.T) {
 	// room exists — joining must fail the same way LiveHub does for a
 	// listener, not with some other opaque error.
 	uc, _, users, _, _ := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 
 	participant := &entity.User{Email: "listener@b.com", Username: "chatty"}
 	if err := users.Create(context.Background(), participant); err != nil {
@@ -549,7 +549,7 @@ func TestStreamUseCase_JoinChatDoesNotRequireOwnership(t *testing.T) {
 	// Unlike StartLive/StopLive, any authenticated user may join and post in
 	// a live stream's chat — the same openness as Listen for audio.
 	uc, _, users, _, _ := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "owner")
+	s := mustCreateStream(t, uc, "owner")
 	if _, err := uc.StartLive(context.Background(), s.ID, "owner", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
 	}
@@ -566,7 +566,7 @@ func TestStreamUseCase_JoinChatDoesNotRequireOwnership(t *testing.T) {
 
 func TestStreamUseCase_JoinChatWithAnUnknownUser(t *testing.T) {
 	uc, _, _, _, _ := newStreamUCWithChat(t)
-	s := mustCreate(t, uc, "user-1")
+	s := mustCreateStream(t, uc, "user-1")
 	if _, err := uc.StartLive(context.Background(), s.ID, "user-1", string(entity.RoleUser)); err != nil {
 		t.Fatalf("StartLive() error = %v", err)
 	}

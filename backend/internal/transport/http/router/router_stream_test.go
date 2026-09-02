@@ -618,6 +618,31 @@ func (rig *liveRig) chatWSURL(t *testing.T, userID string) string {
 		"?token=" + url.QueryEscape(rig.token(t, userID))
 }
 
+// waitChatParticipants blocks until the stream's chat room reports n
+// participants. websocket.Dial returning only means the HTTP handshake
+// completed; the server handler goroutine may not have reached Join() yet.
+// Publish fans out to whoever is subscribed at that instant, not to whoever is
+// about to subscribe, so writing straight after the dials makes the fan-out
+// assertions a coin flip under load.
+func (r *liveRig) waitChatParticipants(t *testing.T, n int) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := -1
+		if room, err := r.chats.Get(r.streamID); err == nil {
+			got = room.Stats().Participants
+			if got == n {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("chat room never reached %d participants (last seen %d)", n, got)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func TestLiveStream_ChatFansOutToEveryParticipantIncludingTheSender(t *testing.T) {
 	rig := newLiveRig(t)
 	_, stopBroadcast := rig.startBroadcast(t, rig.owner)
@@ -639,6 +664,7 @@ func TestLiveStream_ChatFansOutToEveryParticipantIncludingTheSender(t *testing.T
 		defer func() { _ = conn.CloseNow() }()
 		conns[i] = conn
 	}
+	rig.waitChatParticipants(t, participants)
 
 	if err := wsjson.Write(ctx, conns[1], dto.ChatIncoming{Text: "hello from alice"}); err != nil {
 		t.Fatalf("write chat message: %v", err)
