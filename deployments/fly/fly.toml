@@ -1,0 +1,51 @@
+# Fly.io — déploiement de production de l'API.
+#
+# L'application n'est jamais construite par Fly : le déploiement pousse
+# l'image déjà publiée sur GHCR par le job `api-image`. C'est ce qui garantit
+# que l'artefact testé en CI et l'artefact déployé sont le même octet pour
+# octet, au lieu de deux builds qui se ressemblent.
+#
+# `app` doit correspondre à la variable de dépôt FLY_APP (voir
+# docs/runbooks/deploiement-production.md).
+app = "streampulse-api"
+primary_region = "cdg"
+
+[build]
+  # Volontairement vide : l'image est fournie par `flyctl deploy --image`.
+
+[env]
+  PORT = "8080"
+  ENVIRONMENT = "production"
+  # Les traces ne partent nulle part tant qu'un collecteur n'est pas joignable
+  # depuis Fly. Laisser la variable vide est un choix explicite : l'API démarre
+  # sans, plutôt que d'échouer au boot sur une dépendance d'observabilité.
+  OTEL_EXPORTER_OTLP_ENDPOINT = ""
+  # 10 % en production : garder chaque trace d'un service public est un coût
+  # de stockage sans contrepartie, l'échantillon suffit à voir les tendances.
+  # Le sampling ParentBased fait que les traces démarrées en amont restent
+  # complètes.
+  OTEL_TRACES_SAMPLER_ARG = "0.1"
+
+# DATABASE_URL et JWT_SECRET sont des *secrets* Fly, jamais des [env] :
+# tout ce qui est ici est en clair dans le dépôt.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Fly ne bascule le trafic sur la nouvelle version que si ce check passe.
+  # C'est ce qui fait qu'un déploiement cassé s'arrête tout seul au lieu de
+  # remplacer une version qui marchait.
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

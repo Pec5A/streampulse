@@ -138,3 +138,55 @@ jobs:
           path: mobile/${{ matrix.path }}
           if-no-files-found: error
           retention-days: 30
+
+  deploy:
+    name: Deploy to production
+    needs: api-image
+    runs-on: ubuntu-latest
+    # Le job ne tourne que si la variable de dépôt FLY_APP est définie.
+    #
+    # C'est délibérément une *variable* et non le secret : GitHub n'autorise
+    # pas `secrets` dans un `if` de job, et surtout un job de déploiement qui
+    # échoue faute de token laisse la pipeline rouge en permanence — le CD
+    # ressemble alors à du CD tout en ne déployant rien, et plus personne ne
+    # lit le signal. Tant que FLY_APP n'est pas définie, le job est *ignoré*,
+    # ce qui est honnête : on n'annonce pas un déploiement qu'on ne fait pas.
+    if: ${{ vars.FLY_APP != '' }}
+    environment:
+      name: production
+      url: https://${{ vars.FLY_APP }}.fly.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy the image that was just published
+        # --image, jamais un build par Fly : l'artefact déployé est exactement
+        # celui que la CI a vérifié, pas un second build qui lui ressemble.
+        # Fly ne bascule le trafic que si le check /health de fly.toml passe,
+        # donc une image cassée ne remplace pas une version qui marchait.
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deployments/fly/fly.toml \
+            --app "${{ vars.FLY_APP }}" \
+            --image "ghcr.io/${{ github.repository }}-api:sha-${{ github.sha }}" \
+            --strategy rolling \
+            --wait-timeout 300
+
+      - name: Verify production reports the version just deployed
+        # Un déploiement "réussi" qui sert encore l'ancienne version est le
+        # mode de panne qu'on ne voit pas. On interroge la prod et on exige
+        # qu'elle annonce le commit de ce run.
+        run: |
+          for i in $(seq 1 20); do
+            body=$(curl -fsS "https://${{ vars.FLY_APP }}.fly.dev/health" 2>/dev/null) && break
+            sleep 5
+          done
+          echo "health: $body"
+          echo "$body" | grep -q '"status":"ok"' || exit 1
+          echo "$body" | grep -q "${{ github.sha }}" || {
+            echo "::error::la production ne sert pas le commit déployé"
+            exit 1
+          }
