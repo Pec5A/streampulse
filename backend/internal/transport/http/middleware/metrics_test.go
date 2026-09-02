@@ -26,7 +26,8 @@ func TestMetrics_RecordsRequestCountAndStatus(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
 	}
 
-	got := testutil.ToFloat64(observability.HTTPRequestsTotal.WithLabelValues("GET", "GET /widgets/{id}", "201"))
+	// The path label is the template alone; the method is its own label.
+	got := testutil.ToFloat64(observability.HTTPRequestsTotal.WithLabelValues("GET", "/widgets/{id}", "201"))
 	if got < 1 {
 		t.Errorf("HTTPRequestsTotal for GET /widgets/{id}:201 = %v, want >= 1", got)
 	}
@@ -143,5 +144,28 @@ func TestMetrics_UnwrapExposesTheRealWriter(t *testing.T) {
 
 	if got := wrapped.Unwrap(); got != http.ResponseWriter(rec) {
 		t.Errorf("Unwrap() = %v, want the wrapped writer", got)
+	}
+}
+
+func TestMetrics_PathLabelHoldsTheTemplateWithoutTheMethod(t *testing.T) {
+	// Go 1.22 patterns include the method, so using r.Pattern raw produced
+	// series like method="GET", path="GET /health": the method twice, and a
+	// path label that cannot be grouped cleanly in PromQL.
+	observability.HTTPRequestsTotal.Reset()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/streams/{id}", func(w http.ResponseWriter, r *http.Request) {})
+	handler := Metrics(mux)
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/streams/abc", nil))
+
+	got := testutil.ToFloat64(observability.HTTPRequestsTotal.WithLabelValues(
+		http.MethodGet, "/api/v1/streams/{id}", "200"))
+	if got != 1 {
+		t.Errorf("no series for path=/api/v1/streams/{id}; the method is probably still glued to the path")
+	}
+	if leaked := testutil.ToFloat64(observability.HTTPRequestsTotal.WithLabelValues(
+		http.MethodGet, "GET /api/v1/streams/{id}", "200")); leaked != 0 {
+		t.Errorf("path label still carries the method (=%v)", leaked)
 	}
 }

@@ -114,5 +114,9 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	// or behind an auth token is a hardening item for ticket S3.
 	mux.Handle("GET /metrics", promhttp.Handler())
 
-	return middleware.Metrics(mux)
+	// Tracing outermost: the span must cover the whole request, and the
+	// context it injects has to reach everything below — including AccessLog,
+	// which needs that span to stamp trace_id on its line. Ordered the other
+	// way, every access log line would be uncorrelated.
+	return middleware.Tracing(middleware.AccessLog(middleware.Metrics(mux)))
 }

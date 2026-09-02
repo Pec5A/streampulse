@@ -16,6 +16,7 @@ import (
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
 	"github.com/streampulse/backend/internal/infrastructure/config"
+	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/persistence"
 	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/handler"
@@ -42,7 +43,33 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Installed as the default before anything else logs, so no line escapes
+	// in the stdlib's text format.
+	slog.SetDefault(observability.NewLogger(cfg.Environment))
 	slog.Info("config loaded", "env", cfg.Environment, "port", cfg.Port)
+
+	shutdownTracing, err := observability.InitTracing(context.Background(), observability.TracingConfig{
+		ServiceName:    cfg.ServiceName,
+		ServiceVersion: cfg.ServiceVersion,
+		Environment:    cfg.Environment,
+		Endpoint:       cfg.OTLPEndpoint,
+		SampleRatio:    cfg.TraceSampleRatio,
+	})
+	if err != nil {
+		return fmt.Errorf("init tracing: %w", err)
+	}
+	defer func() {
+		// Its own timeout, and deliberately not the request context: this runs
+		// after shutdown has already been signalled, so a context derived from
+		// it would be cancelled and the final batch of spans dropped.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(flushCtx); err != nil {
+			slog.Error("flush traces", "err", err)
+		}
+	}()
+	slog.Info("tracing initialised", "otlp_endpoint", cfg.OTLPEndpoint, "sample_ratio", cfg.TraceSampleRatio)
 
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer dbCancel()
