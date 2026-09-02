@@ -13,12 +13,14 @@ import (
 
 type Handlers struct {
 	Auth     *handler.AuthHandler
+	Stream   *handler.StreamHandler
 	Admin    *handler.AdminHandler
 	Playlist *handler.PlaylistHandler
 }
 
 func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 	mux := http.NewServeMux()
+	authed := middleware.RequireAuth(jwtManager)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -27,7 +29,25 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 
 	mux.HandleFunc("POST /api/v1/auth/register", h.Auth.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.Auth.Login)
-	mux.Handle("POST /api/v1/auth/refresh", middleware.RequireAuth(jwtManager)(http.HandlerFunc(h.Auth.Refresh)))
+	mux.Handle("POST /api/v1/auth/refresh", authed(http.HandlerFunc(h.Auth.Refresh)))
+
+	// Streams — browsing and listening are public; creating, broadcasting
+	// and deleting require an account (and ownership, enforced in the use
+	// case, not here).
+	mux.HandleFunc("GET /api/v1/streams", h.Stream.List)
+	mux.HandleFunc("GET /api/v1/streams/live", h.Stream.ListLive)
+	mux.HandleFunc("GET /api/v1/streams/{id}", h.Stream.Get)
+	mux.HandleFunc("GET /api/v1/streams/{id}/listen", h.Stream.Listen)
+
+	mux.Handle("POST /api/v1/streams", authed(http.HandlerFunc(h.Stream.Create)))
+	mux.Handle("DELETE /api/v1/streams/{id}", authed(http.HandlerFunc(h.Stream.Delete)))
+	mux.Handle("POST /api/v1/streams/{id}/publish", authed(http.HandlerFunc(h.Stream.Publish)))
+
+	// The WebSocket publish route is the one place that also accepts the JWT
+	// as a query parameter — browsers cannot set headers on an upgrade.
+	// See middleware.RequireAuthWS for the trade-off.
+	mux.Handle("GET /api/v1/streams/{id}/publish/ws",
+		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Stream.PublishWS)))
 
 	// Admin area (ticket S2) — every route requires a valid JWT AND the admin
 	// role (RequireAuth then RequireAdmin).
