@@ -38,6 +38,17 @@ cd mobile && flutter analyze && flutter test
 ```
 GitHub Actions: Go quality (vet, race tests, coverage), Flutter (analyze, test), and security scanning (gitleaks + trivy + govulncheck).
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [`docs/diagrams/`](docs/diagrams/README.en.md) | Mermaid diagrams: components, data model, sequences (streaming, tracing), states, deployment |
+| [`docs/PLAN_DE_TESTS.en.md`](docs/PLAN_DE_TESTS.en.md) | Test strategy, measured coverage, identified gaps |
+| [`docs/CAHIER_DE_RECETTE.en.md`](docs/CAHIER_DE_RECETTE.en.md) | Functional expectations per role, and the test verifying each |
+| [`docs/adr/`](docs/adr/) | Architecture decisions and their accepted limits (FR/EN) |
+| [`docs/runbooks/`](docs/runbooks/) | Incident response and production deployment procedure (FR/EN) |
+| [`docs/rgpd/`](docs/rgpd/), [`docs/accessibility/`](docs/accessibility/) | Processing register, accessibility policy |
+
 ## Team & workflow
 SamyZ ([@SamyNikaia](https://github.com/SamyNikaia)), Yassir ([@JASSBR](https://github.com/JASSBR)), KaysZ ([@monkeyDkz](https://github.com/monkeyDkz)).
 **Signed commits required** ("Verified" badge). One PR per ticket, cross-review, no self-merge. See [`docs/team/`](docs/team/) and [`docs/team/branch-protection.md`](docs/team/branch-protection.md).
