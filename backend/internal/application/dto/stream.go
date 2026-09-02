@@ -33,6 +33,20 @@ type PublishSummary struct {
 	BytesPublished int64  `json:"bytes_published"`
 }
 
+// ChatIncoming is a text chat message sent by a client over the chat
+// WebSocket. The server fills in id, user_id, username and sent_at — a
+// client only ever sends the text.
+type ChatIncoming struct {
+	Text string `json:"text"`
+}
+
+// ChatErrorFrame is sent back to the sender alone (never broadcast to the
+// room) when their message fails validation. The connection stays open —
+// only that one message is rejected.
+type ChatErrorFrame struct {
+	Error string `json:"error"`
+}
+
 // StreamFrom projects an entity onto the wire shape. listenerCount comes from
 // the caller because only the transport layer holds the registry.
 func StreamFrom(s *entity.Stream, listenerCount int) StreamResponse {
