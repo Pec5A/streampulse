@@ -30,6 +30,14 @@ services:
       - key: ENVIRONMENT
         value: production
 
+      # Render termine TLS sur son load balancer, donc l'adresse de socket que
+      # voit le process est celle du proxy — identique pour tout le monde.
+      # Sans ce 1, le limiteur de débit met tous les utilisateurs dans le même
+      # quota : la 21e tentative de connexion de la minute échoue quel que soit
+      # son auteur. Défaut relevé en revue par @monkeyDkz.
+      - key: TRUSTED_PROXY_HOPS
+        value: 1
+
       - key: DATABASE_URL
         fromDatabase:
           name: streampulse-db

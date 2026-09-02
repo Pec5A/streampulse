@@ -93,6 +93,7 @@ Le rollback est un **redéploiement d'une image antérieure**, pas un `git rever
 | Erreurs base après ~30 jours | base gratuite expirée | recréer la base, ou passer sur un plan payant |
 | `/health` sans `version` | image construite hors pipeline | redéployer depuis un tag `sha-…` de GHCR |
 | L'app web ne peut pas appeler l'API | `CORS_ALLOWED_ORIGINS` vide | y mettre l'origine exacte du client web |
+| 429 sur `/auth/login` alors que peu de monde se connecte | `TRUSTED_PROXY_HOPS` absent : le quota est partagé par tous | doit valoir `1` derrière le load balancer de Render |
 
 ---
 
@@ -180,3 +181,4 @@ Rollback is **redeploying an earlier image**, not a `git revert`: every commit o
 | Database errors after ~30 days | free database expired | recreate it, or move to a paid plan |
 | `/health` has no `version` | image built outside the pipeline | redeploy from a GHCR `sha-…` tag |
 | The web app cannot call the API | `CORS_ALLOWED_ORIGINS` empty | set the web client's exact origin |
+| 429 on `/auth/login` with few users signing in | `TRUSTED_PROXY_HOPS` unset: the quota is shared by everyone | must be `1` behind Render's load balancer |
