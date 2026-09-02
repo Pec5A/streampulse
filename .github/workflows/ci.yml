@@ -42,7 +42,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          # Kept in sync with security.yml's pin — see that file's comment
+          # for why this isn't a floating '1.26'.
+          go-version: '1.26.6'
 
       - name: Vet
         run: go vet ./...
