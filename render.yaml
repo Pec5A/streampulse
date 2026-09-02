@@ -1,0 +1,69 @@
+# Render Blueprint — mise en production de StreamPulse.
+#
+# `runtime: image` et non un build par Render : le service tire l'image que
+# la CI a déjà publiée sur GHCR et démarrée contre un vrai Postgres pour la
+# vérifier. L'artefact testé et l'artefact déployé sont ainsi le même, octet
+# pour octet, au lieu de deux builds qui se ressemblent. C'est aussi ce qui
+# rend le rollback immédiat : l'image de chaque commit existe déjà.
+services:
+  - name: streampulse-api
+    type: web
+    runtime: image
+    plan: free
+    region: frankfurt
+    image:
+      # Le tag est réécrit à chaque déploiement par le job CD, qui passe
+      # l'image du commit exact (sha-...). Cette valeur n'est que le point
+      # de départ de la première création du Blueprint.
+      url: ghcr.io/pec5a/streampulse-api:main
+      # Le dépôt est privé, donc le paquet GHCR l'est aussi : Render a besoin
+      # d'un identifiant de registre. À créer une fois dans le dashboard
+      # (voir le runbook §1), il ne peut pas être déclaré ici.
+      creds: ghcr
+    # Render ne bascule le trafic que si ce check passe. C'est ce qui fait
+    # qu'un déploiement cassé s'arrête tout seul au lieu de remplacer une
+    # version qui marchait.
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ENVIRONMENT
+        value: production
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: streampulse-db
+          property: connectionString
+
+      # sync: false — demandé à la création, jamais stocké dans le dépôt.
+      # Saisi à la main plutôt que généré par Render parce que la config
+      # exige au moins 32 caractères : une valeur générée trop courte ferait
+      # échouer le démarrage, et le message n'apparaîtrait que dans les logs.
+      - key: JWT_SECRET
+        sync: false
+
+      # Aucune contrainte de longueur, donc généré par Render : un secret que
+      # personne n'a jamais vu est un secret que personne ne peut divulguer.
+      # Obligatoire ici : avec ENVIRONMENT=production, l'API refuse de
+      # démarrer sans lui plutôt que de servir /metrics ouvert.
+      - key: METRICS_TOKEN
+        generateValue: true
+
+      # Origine exacte du client web une fois qu'elle est connue. Vide = aucun
+      # accès navigateur, ce qui est le bon défaut tant qu'il n'y a pas de
+      # client web déployé.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # Pas de collecteur joignable depuis Render : vide désactive le tracing
+      # sans empêcher l'API de démarrer. Le ratio est prêt pour le jour où un
+      # collecteur existe.
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: ""
+      - key: OTEL_TRACES_SAMPLER_ARG
+        value: "0.1"
+
+databases:
+  - name: streampulse-db
+    plan: free
+    region: frankfurt

@@ -143,50 +143,51 @@ jobs:
     name: Deploy to production
     needs: api-image
     runs-on: ubuntu-latest
-    # Le job ne tourne que si la variable de dépôt FLY_APP est définie.
+    # Le job ne tourne que si la variable de dépôt RENDER_SERVICE_ID existe.
     #
-    # C'est délibérément une *variable* et non le secret : GitHub n'autorise
-    # pas `secrets` dans un `if` de job, et surtout un job de déploiement qui
+    # Délibérément une *variable* et non le secret : GitHub n'autorise pas
+    # `secrets` dans un `if` de job, mais surtout un job de déploiement qui
     # échoue faute de token laisse la pipeline rouge en permanence — le CD
     # ressemble alors à du CD tout en ne déployant rien, et plus personne ne
-    # lit le signal. Tant que FLY_APP n'est pas définie, le job est *ignoré*,
-    # ce qui est honnête : on n'annonce pas un déploiement qu'on ne fait pas.
-    if: ${{ vars.FLY_APP != '' }}
+    # lit le signal. Sans cette variable le job est *ignoré*, ce qui est
+    # honnête : on n'annonce pas un déploiement qu'on ne fait pas.
+    if: ${{ vars.RENDER_SERVICE_ID != '' }}
     environment:
       name: production
-      url: https://${{ vars.FLY_APP }}.fly.dev
+      url: ${{ vars.RENDER_SERVICE_URL }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-
       - name: Deploy the image that was just published
-        # --image, jamais un build par Fly : l'artefact déployé est exactement
-        # celui que la CI a vérifié, pas un second build qui lui ressemble.
-        # Fly ne bascule le trafic que si le check /health de fly.toml passe,
-        # donc une image cassée ne remplace pas une version qui marchait.
+        # imageUrl porte le sha exact : Render tire l'image que le job
+        # précédent a publiée ET démarrée contre un vrai Postgres, jamais une
+        # reconstruction. Render ne bascule le trafic que si le healthCheckPath
+        # de render.yaml répond, donc une image cassée ne remplace pas une
+        # version qui marchait.
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          flyctl deploy \
-            --config deployments/fly/fly.toml \
-            --app "${{ vars.FLY_APP }}" \
-            --image "ghcr.io/${{ github.repository }}-api:sha-${{ github.sha }}" \
-            --strategy rolling \
-            --wait-timeout 300
+          image="ghcr.io/${{ github.repository }}-api:sha-${{ github.sha }}"
+          echo "Deploying $image"
+          response=$(curl -fsS -X POST \
+            "https://api.render.com/v1/services/${{ vars.RENDER_SERVICE_ID }}/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"imageUrl\": \"$(echo "$image" | tr '[:upper:]' '[:lower:]')\"}")
+          echo "$response" | head -c 400
 
-      - name: Verify production reports the version just deployed
-        # Un déploiement "réussi" qui sert encore l'ancienne version est le
-        # mode de panne qu'on ne voit pas. On interroge la prod et on exige
-        # qu'elle annonce le commit de ce run.
+      - name: Wait until production serves the commit that was deployed
+        # Le vrai critère de réussite. Un déploiement rapporté "réussi" qui
+        # sert encore l'ancienne version est le mode de panne qu'on ne voit
+        # pas : on interroge donc la prod jusqu'à ce qu'elle annonce le commit
+        # de ce run. Le service gratuit peut être endormi, d'où la patience.
         run: |
-          for i in $(seq 1 20); do
-            body=$(curl -fsS "https://${{ vars.FLY_APP }}.fly.dev/health" 2>/dev/null) && break
-            sleep 5
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 90 "${{ vars.RENDER_SERVICE_URL }}/health" 2>/dev/null || true)
+            if echo "$body" | grep -q "${{ github.sha }}"; then
+              echo "live: $body"
+              exit 0
+            fi
+            sleep 10
           done
-          echo "health: $body"
-          echo "$body" | grep -q '"status":"ok"' || exit 1
-          echo "$body" | grep -q "${{ github.sha }}" || {
-            echo "::error::la production ne sert pas le commit déployé"
-            exit 1
-          }
+          echo "::error::la production ne sert pas le commit déployé après 10 min"
+          echo "dernière réponse: $body"
+          exit 1
