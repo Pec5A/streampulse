@@ -1,3 +1,4 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -10,22 +11,51 @@ import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/repository/auth_repository.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/auth/user_model.dart';
+import 'features/player/audio/audio_engine.dart';
+import 'features/player/audio/just_audio_engine.dart';
+import 'features/player/audio/stream_audio_handler.dart';
+import 'features/player/repositories/stream_repository.dart';
+import 'features/player/screens/live_streams_screen.dart';
 import 'features/playlists/bloc/playlists_bloc.dart';
 import 'features/playlists/repositories/playlist_repository.dart';
 import 'features/playlists/screens/playlists_screen.dart';
 
-void main() {
-  const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'http://localhost:8080');
+const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'http://localhost:8080');
+
+Future<void> main() async {
+  // AudioService.init touches platform channels, so the binding has to exist
+  // first.
+  WidgetsFlutterBinding.ensureInitialized();
+
   final apiClient = ApiClient(baseUrl: apiUrl);
   final storage = SecureStorage();
   final authRepository = AuthRepository(apiClient: apiClient, storage: storage);
   final adminRepository = AdminRepository(apiClient: apiClient, storage: storage);
   final playlistRepository = PlaylistRepository(apiClient: apiClient, storage: storage);
+  final streamRepository = StreamRepository(baseUrl: apiUrl);
+
+  // One handler for the whole app: it owns the audio session and keeps
+  // playback alive in the background, with controls on the lock screen.
+  final engine = JustAudioEngine();
+  await engine.configure();
+  final audioHandler = await AudioService.init(
+    builder: () => StreamAudioHandler(engine),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.pec5a.streampulse.audio',
+      androidNotificationChannelName: 'Lecture StreamPulse',
+      // Keeps the foreground service (and therefore the audio) alive when
+      // the app leaves the foreground.
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
+  );
 
   runApp(StreamPulseApp(
     authRepository: authRepository,
     adminRepository: adminRepository,
     playlistRepository: playlistRepository,
+    streamRepository: streamRepository,
+    audioEngine: audioHandler,
   ));
 }
 
@@ -35,14 +65,26 @@ class StreamPulseApp extends StatelessWidget {
     required this.authRepository,
     required this.adminRepository,
     required this.playlistRepository,
+    this.streamRepository,
+    this.audioEngine,
   });
 
   final AuthRepository authRepository;
   final AdminRepository adminRepository;
   final PlaylistRepository playlistRepository;
 
+  /// Optional so existing widget tests can boot the app without wiring the
+  /// streaming stack; falls back to a repository pointed at [apiUrl].
+  final StreamRepository? streamRepository;
+
+  /// The shared background-capable engine. Null in tests, where each player
+  /// screen builds its own.
+  final AudioEngine? audioEngine;
+
   @override
   Widget build(BuildContext context) {
+    final streams = streamRepository ?? StreamRepository(baseUrl: apiUrl);
+
     return MultiRepositoryProvider(
       providers: [
         RepositoryProvider.value(value: adminRepository),
@@ -57,7 +99,13 @@ class StreamPulseApp extends StatelessWidget {
             listener: (context, state) {
               if (state is AuthAuthenticated) {
                 Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => HomeScreen(user: state.user)),
+                  MaterialPageRoute(
+                    builder: (_) => HomeScreen(
+                      user: state.user,
+                      streamRepository: streams,
+                      audioEngine: audioEngine,
+                    ),
+                  ),
                 );
               }
             },
@@ -79,10 +127,19 @@ ThemeData _appTheme() {
   );
 }
 
-/// Landing screen after login: playlists for everyone, admin console for admins.
+/// Landing screen after login: live streams and playlists for everyone, admin
+/// console for admins.
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.user});
+  const HomeScreen({
+    super.key,
+    required this.user,
+    required this.streamRepository,
+    this.audioEngine,
+  });
+
   final UserModel user;
+  final StreamRepository streamRepository;
+  final AudioEngine? audioEngine;
 
   @override
   Widget build(BuildContext context) {
@@ -94,6 +151,19 @@ class HomeScreen extends StatelessWidget {
           children: [
             Text('Bienvenue, ${user.username}'),
             const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => LiveStreamsScreen(
+                    repository: streamRepository,
+                    engine: audioEngine,
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.podcasts),
+              label: const Text('En direct'),
+            ),
+            const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(

@@ -18,6 +18,7 @@ import (
 	"github.com/streampulse/backend/internal/infrastructure/config"
 	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/persistence"
+	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/handler"
 	"github.com/streampulse/backend/internal/transport/http/router"
 )
@@ -78,18 +79,26 @@ func run() error {
 	slog.Info("migrations applied")
 
 	userRepo := persistence.NewUserRepository(db)
+	streamRepo := persistence.NewStreamRepository(db)
 	playlistRepo := persistence.NewPlaylistRepository(db)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTExpiration)
 	hasher := auth.NewBcryptHasher()
 
+	// The streaming registry holds every live broadcast in memory for this
+	// process, so it is created once here and shared by all requests.
+	registry := streaming.NewRegistry()
+	defer registry.CloseAll()
+
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
+	streamUC := usecase.NewStreamUseCase(streamRepo, registry)
 	adminUC := usecase.NewAdminUseCase(userRepo)
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
 	handlers := router.Handlers{
 		Auth:     handler.NewAuthHandler(authUC),
 		User:     handler.NewUserHandler(userUC),
+		Stream:   handler.NewStreamHandler(streamUC),
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
 	}

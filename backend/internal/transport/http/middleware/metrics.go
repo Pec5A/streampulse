@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,6 +21,42 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap, Flush and Hijack keep the wrapper transparent to everything the
+// handlers below actually need from a ResponseWriter.
+//
+// Without them this middleware silently breaks the two features that matter
+// most here, and breaks them in the worst way — no error, no log, just a hang:
+//
+//   - Live listening calls http.NewResponseController(w).Flush(). The
+//     controller finds the real writer by following Unwrap; with no Unwrap it
+//     returns ErrNotSupported, the handler discards that error, and the audio
+//     chunks sit in the buffer forever. Listeners connect, get a 200, and hear
+//     nothing.
+//   - The WebSocket publish route needs Hijack. coder/websocket type-asserts
+//     http.Hijacker directly rather than going through the controller, so
+//     Unwrap alone does not cover it — the upgrade has to be forwarded by
+//     hand.
+//
+// Found by the merge that first put streaming and this middleware in the same
+// binary: the router suite went from seconds to a 10-minute timeout.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return hj.Hijack()
 }
 
 // unmatchedRoute is the fixed path label used when no route pattern matched
