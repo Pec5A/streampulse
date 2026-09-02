@@ -20,7 +20,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          # Pinned to the exact latest patch, not a floating '1.26': that
+          # floating pin resolved to a stale 1.26.5 toolchain with 4 known
+          # stdlib CVEs already fixed in 1.26.6, making every PR's
+          # govulncheck fail on the Go standard library itself — nothing to
+          # do with application code. Bump this again whenever govulncheck
+          # flags a newer stdlib fix release.
+          go-version: '1.26.6'
 
       # govulncheck reports only vulnerabilities whose affected functions are
       # actually reachable from our code — low false-positive rate.
