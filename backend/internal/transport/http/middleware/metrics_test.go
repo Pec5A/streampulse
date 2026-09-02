@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,5 +64,76 @@ func TestMetrics_CollapsesUnmatchedRoutesOntoOneLabel(t *testing.T) {
 			observability.HTTPRequestsTotal.WithLabelValues("GET", p, "404")); raw != 0 {
 			t.Errorf("raw path %q leaked a series (=%v); label cardinality is unbounded", p, raw)
 		}
+	}
+}
+
+// The three tests below guard the transparency of statusRecorder. They exist
+// because losing it does not produce an error anywhere: the listen endpoint
+// keeps answering 200 and simply never delivers audio, and the WebSocket
+// upgrade fails deep inside the library. The router suite went from seconds
+// to a ten-minute timeout the first time streaming and this middleware met.
+
+func TestMetrics_WrappedWriterStaysFlushable(t *testing.T) {
+	// http.NewResponseController is what the live-listen handler uses; it
+	// finds the real writer by following Unwrap.
+	var flushed bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("Flush() through the middleware error = %v, want nil — audio would never leave the buffer", err)
+			return
+		}
+		flushed = true
+	})
+
+	srv := httptest.NewServer(Metrics(next))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/stream") //nolint:noctx // test client
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if !flushed {
+		t.Error("handler could not flush through the metrics middleware")
+	}
+}
+
+func TestMetrics_WrappedWriterStaysHijackable(t *testing.T) {
+	// coder/websocket type-asserts http.Hijacker directly instead of going
+	// through the response controller, so Unwrap alone is not enough.
+	hijackErr := make(chan error, 1)
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			hijackErr <- fmt.Errorf("wrapped writer does not implement http.Hijacker; the WebSocket publish route cannot upgrade")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			hijackErr <- err
+			return
+		}
+		hijackErr <- nil
+		_ = conn.Close()
+	})
+
+	srv := httptest.NewServer(Metrics(next))
+	defer srv.Close()
+
+	//nolint:bodyclose,noctx // the connection is hijacked and closed server-side
+	_, _ = http.Get(srv.URL + "/ws")
+
+	if err := <-hijackErr; err != nil {
+		t.Error(err)
+	}
+}
+
+func TestMetrics_UnwrapExposesTheRealWriter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	wrapped := &statusRecorder{ResponseWriter: rec, status: http.StatusOK}
+
+	if got := wrapped.Unwrap(); got != http.ResponseWriter(rec) {
+		t.Errorf("Unwrap() = %v, want the wrapped writer", got)
 	}
 }
