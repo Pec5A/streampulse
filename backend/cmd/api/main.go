@@ -66,13 +66,18 @@ func run() error {
 	hasher := auth.NewBcryptHasher()
 
 	// The streaming registry holds every live broadcast in memory for this
-	// process, so it is created once here and shared by all requests.
+	// process, so it is created once here and shared by all requests. The
+	// chat registry follows the exact same lifecycle, one room per live
+	// stream, opened and closed by StreamUseCase in lockstep with the audio
+	// hub — see StreamUseCase.StartLive/StopLive.
 	registry := streaming.NewRegistry()
 	defer registry.CloseAll()
+	chatRegistry := streaming.NewChatRegistry()
+	defer chatRegistry.CloseAll()
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
-	streamUC := usecase.NewStreamUseCase(streamRepo, registry)
+	streamUC := usecase.NewStreamUseCase(streamRepo, userRepo, registry, chatRegistry)
 	adminUC := usecase.NewAdminUseCase(userRepo)
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 

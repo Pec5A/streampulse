@@ -118,7 +118,9 @@ var _ repository.StreamRepository = (*stubStreamRepo)(nil)
 type streamTestRig struct {
 	mux      *http.ServeMux
 	repo     *stubStreamRepo
+	users    *fakeUserRepo
 	registry *streaming.Registry
+	chats    *streaming.ChatRegistry
 	jwt      *auth.JWTManager
 }
 
@@ -126,10 +128,13 @@ func newStreamTestRig(t *testing.T) *streamTestRig {
 	t.Helper()
 
 	repo := newStubStreamRepo()
+	users := newFakeUserRepo()
 	registry := streaming.NewRegistry()
 	t.Cleanup(registry.CloseAll)
+	chats := streaming.NewChatRegistry()
+	t.Cleanup(chats.CloseAll)
 
-	uc := usecase.NewStreamUseCase(repo, registry)
+	uc := usecase.NewStreamUseCase(repo, users, registry, chats)
 	h := NewStreamHandler(uc)
 	jwtManager := auth.NewJWTManager(testSecret, time.Hour)
 	authed := middleware.RequireAuth(jwtManager)
@@ -142,8 +147,10 @@ func newStreamTestRig(t *testing.T) *streamTestRig {
 	mux.Handle("POST /api/v1/streams", authed(http.HandlerFunc(h.Create)))
 	mux.Handle("DELETE /api/v1/streams/{id}", authed(http.HandlerFunc(h.Delete)))
 	mux.Handle("POST /api/v1/streams/{id}/publish", authed(http.HandlerFunc(h.Publish)))
+	mux.Handle("GET /api/v1/streams/{id}/chat",
+		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Chat)))
 
-	return &streamTestRig{mux: mux, repo: repo, registry: registry, jwt: jwtManager}
+	return &streamTestRig{mux: mux, repo: repo, users: users, registry: registry, chats: chats, jwt: jwtManager}
 }
 
 // token mints a real JWT, so tests exercise the actual auth path.

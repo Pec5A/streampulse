@@ -74,9 +74,12 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 
 	// The WebSocket publish route is the one place that also accepts the JWT
 	// as a query parameter — browsers cannot set headers on an upgrade.
-	// See middleware.RequireAuthWS for the trade-off.
+	// See middleware.RequireAuthWS for the trade-off. Chat has the same
+	// browser constraint, so it uses the same middleware.
 	mux.Handle("GET /api/v1/streams/{id}/publish/ws",
 		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Stream.PublishWS)))
+	mux.Handle("GET /api/v1/streams/{id}/chat",
+		middleware.RequireAuthWS(jwtManager)(http.HandlerFunc(h.Stream.Chat)))
 
 	// Admin area (ticket S2) — every route requires a valid JWT AND the admin
 	// role (RequireAuth then RequireAdmin).

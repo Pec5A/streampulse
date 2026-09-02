@@ -38,11 +38,13 @@ var (
 // hub behind it, or the reverse).
 type StreamUseCase struct {
 	streams  repository.StreamRepository
+	users    repository.UserRepository
 	registry *streaming.Registry
+	chats    *streaming.ChatRegistry
 }
 
-func NewStreamUseCase(streams repository.StreamRepository, registry *streaming.Registry) *StreamUseCase {
-	return &StreamUseCase{streams: streams, registry: registry}
+func NewStreamUseCase(streams repository.StreamRepository, users repository.UserRepository, registry *streaming.Registry, chats *streaming.ChatRegistry) *StreamUseCase {
+	return &StreamUseCase{streams: streams, users: users, registry: registry, chats: chats}
 }
 
 // Create registers a new stream owned by broadcasterID. A stream is created
@@ -101,7 +103,9 @@ func (uc *StreamUseCase) ListLive(ctx context.Context) ([]entity.Stream, error) 
 }
 
 // StartLive authorises the broadcaster, marks the stream live and opens its
-// hub. The returned hub is where the caller pushes audio chunks.
+// audio hub and its chat room together — a live stream and its chat share
+// one lifetime, so nothing that starts one can forget to start the other.
+// The returned hub is where the caller pushes audio chunks.
 func (uc *StreamUseCase) StartLive(ctx context.Context, streamID, userID, role string) (*streaming.Hub, error) {
 	stream, err := uc.authorise(ctx, streamID, userID, role)
 	if err != nil {
@@ -112,21 +116,26 @@ func (uc *StreamUseCase) StartLive(ctx context.Context, streamID, userID, role s
 		return nil, fmt.Errorf("mark stream live: %w", err)
 	}
 
-	// The hub outlives the request context: cancelling the broadcaster's
-	// request must not tear the hub down before StopLive has flipped the
-	// database row back, and listeners have their own request contexts.
-	return uc.registry.Open(context.WithoutCancel(ctx), stream.ID), nil
+	// Both hubs outlive the request context: cancelling the broadcaster's
+	// request must not tear them down before StopLive has flipped the
+	// database row back, and listeners/chat participants have their own
+	// request contexts.
+	liveCtx := context.WithoutCancel(ctx)
+	uc.chats.Open(liveCtx, stream.ID)
+	return uc.registry.Open(liveCtx, stream.ID), nil
 }
 
-// StopLive closes the hub and flips the stream back to offline. It is called
-// from a deferred block in the publish handlers, so it must succeed even when
-// the broadcaster's request context is already cancelled.
+// StopLive closes the audio hub and the chat room, then flips the stream
+// back to offline. It is called from a deferred block in the publish
+// handlers, so it must succeed even when the broadcaster's request context
+// is already cancelled.
 func (uc *StreamUseCase) StopLive(ctx context.Context, streamID, userID, role string) error {
 	if _, err := uc.authorise(ctx, streamID, userID, role); err != nil {
 		return err
 	}
 
 	uc.registry.Close(streamID)
+	uc.chats.Close(streamID)
 
 	if err := uc.streams.UpdateStatus(ctx, streamID, entity.StreamStatusOffline); err != nil {
 		return fmt.Errorf("mark stream offline: %w", err)
@@ -143,6 +152,23 @@ func (uc *StreamUseCase) LiveHub(streamID string) (*streaming.Hub, error) {
 	return hub, nil
 }
 
+// JoinChat authorises a chat participant and resolves their display name.
+// Unlike Publish/StartLive, this is not broadcaster-only: any authenticated
+// user may join and post in a live stream's chat, the same way anyone can
+// Listen to its audio — chat only requires an identity so messages can be
+// attributed, it does not require ownership of the stream.
+func (uc *StreamUseCase) JoinChat(ctx context.Context, streamID, userID string) (*streaming.ChatHub, string, error) {
+	hub, err := uc.chats.Get(streamID)
+	if err != nil {
+		return nil, "", ErrStreamNotLive
+	}
+	user, err := uc.users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	return hub, user.Username, nil
+}
+
 // ListenerCount reports the live audience of a stream (0 when offline).
 func (uc *StreamUseCase) ListenerCount(streamID string) int {
 	return uc.registry.ListenerCount(streamID)
@@ -155,6 +181,7 @@ func (uc *StreamUseCase) Delete(ctx context.Context, streamID, userID, role stri
 		return err
 	}
 	uc.registry.Close(streamID)
+	uc.chats.Close(streamID)
 	return uc.streams.Delete(ctx, streamID)
 }
 
