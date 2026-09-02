@@ -49,12 +49,17 @@ func InitTracing(ctx context.Context, cfg TracingConfig) (func(context.Context) 
 		propagation.Baggage{},
 	))
 
-	if cfg.Endpoint == "" {
-		return func(context.Context) error { return nil }, nil
-	}
-
+	// Validated before the early return: a bad ratio must fail now, not the
+	// day someone plugs a collector in. Checking it after would let an
+	// invalid configuration sit silently in an environment where tracing
+	// happens to be off, and surface at the worst moment. Raised in review
+	// by @monkeyDkz.
 	if cfg.SampleRatio < 0 || cfg.SampleRatio > 1 {
 		return nil, fmt.Errorf("trace sample ratio must be between 0 and 1, got %v", cfg.SampleRatio)
+	}
+
+	if cfg.Endpoint == "" {
+		return func(context.Context) error { return nil }, nil
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
