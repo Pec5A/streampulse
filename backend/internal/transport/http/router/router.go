@@ -27,6 +27,7 @@ type Handlers struct {
 	Auth     *handler.AuthHandler
 	User     *handler.UserHandler
 	Stream   *handler.StreamHandler
+	Track    *handler.TrackHandler
 	Admin    *handler.AdminHandler
 	Playlist *handler.PlaylistHandler
 }
@@ -93,6 +94,16 @@ func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler 
 	mux.Handle("POST /api/v1/streams", authed(http.HandlerFunc(h.Stream.Create)))
 	mux.Handle("DELETE /api/v1/streams/{id}", authed(http.HandlerFunc(h.Stream.Delete)))
 	mux.Handle("POST /api/v1/streams/{id}/publish", authed(http.HandlerFunc(h.Stream.Publish)))
+
+	// Tracks — the catalogue and the audio itself are public (same rule as
+	// listening to a live stream); uploading and deleting are not.
+	mux.HandleFunc("GET /api/v1/tracks", h.Track.List)
+	mux.HandleFunc("GET /api/v1/tracks/{id}", h.Track.Get)
+	mux.HandleFunc("GET /api/v1/tracks/{id}/audio", h.Track.Audio)
+
+	mux.Handle("POST /api/v1/tracks", authed(http.HandlerFunc(h.Track.Upload)))
+	mux.Handle("GET /api/v1/tracks/mine", authed(http.HandlerFunc(h.Track.ListMine)))
+	mux.Handle("DELETE /api/v1/tracks/{id}", authed(http.HandlerFunc(h.Track.Delete)))
 
 	// The WebSocket publish route is the one place that also accepts the JWT
 	// as a query parameter — browsers cannot set headers on an upgrade.

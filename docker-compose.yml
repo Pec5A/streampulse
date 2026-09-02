@@ -6,6 +6,7 @@ services:
       DATABASE_URL: postgres://streampulse:streampulse@postgres:5432/streampulse?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-32-chars-min}
       ENVIRONMENT: development
+      STORAGE_PATH: /var/lib/streampulse/uploads
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_SERVICE_NAME: streampulse-api
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
@@ -21,6 +22,12 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:8081,http://127.0.0.1:8081
     ports:
       - "8080:8080"
+    volumes:
+      # Without this, restarting the stack drops every uploaded file while the
+      # tracks rows survive — leaving rows that point at objects which no
+      # longer exist. The API answers those 404 rather than 500 (see ADR
+      # 0009), but the audio is gone all the same.
+      - uploads_data:/var/lib/streampulse/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +111,7 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:
   prometheus_data:
   grafana_data:
   tempo_data:

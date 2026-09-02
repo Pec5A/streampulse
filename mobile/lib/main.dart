@@ -14,6 +14,8 @@ import 'features/auth/user_model.dart';
 import 'features/player/audio/audio_engine.dart';
 import 'features/player/audio/just_audio_engine.dart';
 import 'features/player/audio/stream_audio_handler.dart';
+import 'features/broadcaster/repositories/broadcaster_repository.dart';
+import 'features/broadcaster/screens/broadcaster_screen.dart';
 import 'features/player/repositories/stream_repository.dart';
 import 'features/player/screens/live_streams_screen.dart';
 import 'features/playlists/bloc/playlists_bloc.dart';
@@ -33,6 +35,7 @@ Future<void> main() async {
   final adminRepository = AdminRepository(apiClient: apiClient, storage: storage);
   final playlistRepository = PlaylistRepository(apiClient: apiClient, storage: storage);
   final streamRepository = StreamRepository(baseUrl: apiUrl);
+  final broadcasterRepository = BroadcasterRepository(baseUrl: apiUrl);
 
   // One handler for the whole app: it owns the audio session and keeps
   // playback alive in the background, with controls on the lock screen.
@@ -55,6 +58,7 @@ Future<void> main() async {
     adminRepository: adminRepository,
     playlistRepository: playlistRepository,
     streamRepository: streamRepository,
+    broadcasterRepository: broadcasterRepository,
     audioEngine: audioHandler,
   ));
 }
@@ -66,6 +70,7 @@ class StreamPulseApp extends StatelessWidget {
     required this.adminRepository,
     required this.playlistRepository,
     this.streamRepository,
+    this.broadcasterRepository,
     this.audioEngine,
   });
 
@@ -77,6 +82,9 @@ class StreamPulseApp extends StatelessWidget {
   /// streaming stack; falls back to a repository pointed at [apiUrl].
   final StreamRepository? streamRepository;
 
+  /// Optional for the same reason as [streamRepository].
+  final BroadcasterRepository? broadcasterRepository;
+
   /// The shared background-capable engine. Null in tests, where each player
   /// screen builds its own.
   final AudioEngine? audioEngine;
@@ -84,6 +92,7 @@ class StreamPulseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final streams = streamRepository ?? StreamRepository(baseUrl: apiUrl);
+    final broadcaster = broadcasterRepository ?? BroadcasterRepository(baseUrl: apiUrl);
 
     return MultiRepositoryProvider(
       providers: [
@@ -104,6 +113,8 @@ class StreamPulseApp extends StatelessWidget {
                       user: state.user,
                       streamRepository: streams,
                       audioEngine: audioEngine,
+                      broadcasterRepository: broadcaster,
+                      authRepository: authRepository,
                     ),
                   ),
                 );
@@ -134,11 +145,17 @@ class HomeScreen extends StatelessWidget {
     super.key,
     required this.user,
     required this.streamRepository,
+    required this.broadcasterRepository,
+    required this.authRepository,
     this.audioEngine,
   });
 
   final UserModel user;
   final StreamRepository streamRepository;
+  final BroadcasterRepository broadcasterRepository;
+
+  /// Needed to read the stored JWT when opening the broadcaster console.
+  final AuthRepository authRepository;
   final AudioEngine? audioEngine;
 
   @override
@@ -162,6 +179,12 @@ class HomeScreen extends StatelessWidget {
               ),
               icon: const Icon(Icons.podcasts),
               label: const Text('En direct'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => _openBroadcaster(context, broadcasterRepository, authRepository),
+              icon: const Icon(Icons.mic),
+              label: const Text('Diffuser'),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -198,4 +221,31 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Reads the stored JWT, then opens the broadcaster console.
+///
+/// The token is read on demand rather than held in the widget tree: it lives
+/// in secure storage, and keeping a copy around longer than a single call is
+/// exactly the kind of thing that ends up in a crash log.
+Future<void> _openBroadcaster(
+  BuildContext context,
+  BroadcasterRepository repository,
+  AuthRepository auth,
+) async {
+  final token = await auth.readStoredToken();
+  if (!context.mounted) return;
+
+  if (token == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Session expirée, reconnecte-toi.')),
+    );
+    return;
+  }
+
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => BroadcasterScreen(repository: repository, token: token),
+    ),
+  );
 }
