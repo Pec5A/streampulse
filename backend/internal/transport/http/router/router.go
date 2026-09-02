@@ -20,17 +20,36 @@ type Handlers struct {
 	Playlist *handler.PlaylistHandler
 }
 
-func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
+// Options carries the deployment-dependent hardening settings. Variadic on
+// New so the many test call sites that do not care keep compiling — and so
+// that the zero value is the safe one: no CORS, no metrics exposure guard
+// needed (development), no rate limit.
+type Options struct {
+	Environment    string
+	AllowedOrigins []string
+	MetricsToken   string
+	AuthRateLimit  int
+}
+
+func New(h Handlers, jwtManager *auth.JWTManager, opts ...Options) http.Handler {
+	var o Options
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+
 	mux := http.NewServeMux()
 	authed := middleware.RequireAuth(jwtManager)
+	// Credential stuffing is the attack this closes: bcrypt makes each attempt
+	// slow, nothing made them few.
+	authLimit := middleware.RateLimit(o.AuthRateLimit)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	mux.HandleFunc("POST /api/v1/auth/register", h.Auth.Register)
-	mux.HandleFunc("POST /api/v1/auth/login", h.Auth.Login)
+	mux.Handle("POST /api/v1/auth/register", authLimit(http.HandlerFunc(h.Auth.Register)))
+	mux.Handle("POST /api/v1/auth/login", authLimit(http.HandlerFunc(h.Auth.Login)))
 	mux.Handle("POST /api/v1/auth/refresh", authed(http.HandlerFunc(h.Auth.Refresh)))
 
 	// Account endpoints (ticket Y2) — the id always comes from the JWT, never
@@ -84,14 +103,22 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 		mux.Handle("PUT /api/v1/playlists/{id}/tracks/order", protected(h.Playlist.Reorder))
 	}
 
-	// Open scrape endpoint for local/docker-compose Prometheus. Not
-	// authenticated — acceptable for now since nothing here is deployed
-	// publicly yet (ticket K3); restricting /metrics at the network level
-	// or behind an auth token is a hardening item for ticket S3.
-	mux.Handle("GET /metrics", promhttp.Handler())
+	// The scrape endpoint publishes the route table, per-route volumes,
+	// latency distributions and the process memory profile — a map of the
+	// application. Guarded by a bearer token, which config.Load makes
+	// mandatory outside development.
+	mux.Handle("GET /metrics", middleware.RequireMetricsToken(o.MetricsToken)(promhttp.Handler()))
 
-	// Tracing outermost: the span must cover the whole request, and the
-	// context it injects has to reach the metrics middleware and every
-	// handler below it.
-	return middleware.Tracing(middleware.Metrics(mux))
+	// Order matters, outermost first:
+	//   Tracing          the span must cover everything, including rejections
+	//   SecurityHeaders  set before any handler can start writing a body
+	//   Metrics          so a preflight or a 429 still shows up in the counters
+	//   CORS             answers preflights itself; the mux would 405 them
+	return middleware.Tracing(
+		middleware.SecurityHeaders(o.Environment)(
+			middleware.Metrics(
+				middleware.CORS(o.AllowedOrigins)(mux),
+			),
+		),
+	)
 }
