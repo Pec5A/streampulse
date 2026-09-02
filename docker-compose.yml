@@ -7,6 +7,19 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-32-chars-min}
       ENVIRONMENT: development
       STORAGE_PATH: /var/lib/streampulse/uploads
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_SERVICE_NAME: streampulse-api
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      # Every trace kept locally: the stack exists to be inspected, and
+      # sampling would make a demo request disappear at random.
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      # Set even though development would tolerate an empty token: the guard
+      # has to be exercised by the stack people actually run, otherwise it is
+      # only ever proven by unit tests and discovered broken in production.
+      METRICS_TOKEN: ${METRICS_TOKEN:-local-scrape-token}
+      # The Flutter web build served by `flutter run -d chrome` and the CD web
+      # artefact. Nothing else: browser access stays an explicit list.
+      CORS_ALLOWED_ORIGINS: http://localhost:8081,http://127.0.0.1:8081
     ports:
       - "8080:8080"
     volumes:
@@ -18,6 +31,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
@@ -39,6 +54,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.1
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./deployments/otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - tempo
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./deployments/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200" # Tempo API, queried by Grafana
 
   prometheus:
     image: prom/prometheus:latest
@@ -72,9 +107,11 @@ services:
       - ./deployments/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
+      - tempo
 
 volumes:
   postgres_data:
   uploads_data:
   prometheus_data:
   grafana_data:
+  tempo_data:

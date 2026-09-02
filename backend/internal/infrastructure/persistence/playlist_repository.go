@@ -60,7 +60,7 @@ func (r *PlaylistRepository) ListByOwner(ctx context.Context, ownerID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("list playlists: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []entity.Playlist
 	for rows.Next() {
@@ -98,7 +98,7 @@ func (r *PlaylistRepository) ListTracks(ctx context.Context, playlistID string) 
 	if err != nil {
 		return nil, fmt.Errorf("list tracks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []entity.Track
 	for rows.Next() {

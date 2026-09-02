@@ -49,10 +49,27 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Staticcheck
+      - name: Lint (golangci-lint)
+        # Remplace l'étape staticcheck autonome : golangci-lint fait tourner
+        # staticcheck en plus d'errcheck, govet, ineffassign et unused, sous
+        # une seule configuration versionnée (backend/.golangci.yml).
+        #
+        # gosec reste une étape séparée juste en dessous : golangci-lint sait
+        # l'exécuter, mais avec un filtrage de sévérité différent, et affaiblir
+        # une vérification de sécurité pour économiser une étape est un mauvais
+        # échange.
+        #
+        # Installé par `go install` et non par golangci-lint-action, pour la
+        # même raison que le toolchain a dû être épinglé en #24 : l'action
+        # télécharge un binaire pré-compilé, et un binaire construit avec une
+        # version de Go antérieure à celle du module refuse de charger la
+        # configuration ("the Go language version used to build golangci-lint
+        # is lower than the targeted Go version"). Compiler avec le toolchain
+        # du job supprime la classe entière du problème — au prix d'une
+        # minute de build.
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          golangci-lint run ./...
 
       - name: Security scan (gosec)
         run: |

@@ -1,0 +1,40 @@
+# OpenTelemetry Collector — the single ingestion point for traces.
+#
+# Why a collector rather than exporting straight from the API to Tempo: the
+# backend then knows one endpoint and one protocol (OTLP). Swapping Tempo for
+# Jaeger, adding sampling, or fanning out to a second backend becomes a change
+# in this file rather than a redeploy of the API.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bounds the collector's own memory before it becomes the thing that falls
+  # over during the incident it is supposed to help diagnose.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+  telemetry:
+    logs:
+      level: info

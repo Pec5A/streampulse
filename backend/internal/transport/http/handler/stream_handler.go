@@ -196,7 +196,7 @@ func (h *StreamHandler) pump(r *http.Request, hub *streaming.Hub, streamID strin
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				slog.Info("publish read ended", "stream_id", streamID, "err", readErr)
+				slog.InfoContext(r.Context(), "publish read ended", "stream_id", streamID, "err", readErr)
 			}
 			return published
 		}
@@ -226,7 +226,7 @@ func (h *StreamHandler) PublishWS(w http.ResponseWriter, r *http.Request) {
 		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
 	})
 	if err != nil {
-		slog.Error("websocket accept", "stream_id", streamID, "err", err)
+		slog.ErrorContext(r.Context(), "websocket accept", "stream_id", streamID, "err", err)
 		return
 	}
 	defer func() { _ = conn.CloseNow() }()
@@ -420,7 +420,7 @@ func (h *StreamHandler) stopLive(ctx context.Context, streamID, userID, role str
 	defer cancel()
 
 	if err := h.uc.StopLive(stopCtx, streamID, userID, role); err != nil {
-		slog.Error("stop live stream", "stream_id", streamID, "err", err)
+		slog.ErrorContext(stopCtx, "stop live stream", "stream_id", streamID, "err", err)
 	}
 }
 
