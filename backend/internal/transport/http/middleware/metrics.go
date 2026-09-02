@@ -79,7 +79,12 @@ func Metrics(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 
-		path := r.Pattern
+		// pathTemplate strips the method that Go 1.22 patterns carry
+		// ("GET /api/v1/streams/{id}"). Keeping it would repeat the method
+		// inside the path label — series read `method="GET", path="GET
+		// /health"` — which makes every `sum by (path)` awkward and the two
+		// labels redundant.
+		path := pathTemplate(r.Pattern)
 		if path == "" {
 			path = unmatchedRoute
 		}
