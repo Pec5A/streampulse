@@ -47,8 +47,23 @@ if [[ "${LOGIN_STATUS}" != "200" ]]; then
 fi
 echo "  ok: login -> ${LOGIN_STATUS}"
 
+echo "Checking /metrics is closed without a token ..."
+# The guard is part of what a deploy has to get right: /metrics publishes the
+# route table, per-route volumes, latency distributions and the memory
+# profile. A deploy that comes up with it open is a deploy that must fail
+# here, not one that gets noticed by whoever scans the host first.
+UNAUTHENTICATED_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/metrics")
+if [[ "${UNAUTHENTICATED_STATUS}" != "404" ]]; then
+  echo "::error::/metrics answered ${UNAUTHENTICATED_STATUS} without a token, expected 404 — the endpoint is exposed"
+  exit 1
+fi
+echo "  ok: /metrics -> ${UNAUTHENTICATED_STATUS} without a token"
+
 echo "Checking /metrics exposes the auth business counters ..."
-METRICS=$(curl -sf "${API_URL}/metrics")
+# Must match METRICS_TOKEN in docker-compose.yml. Local development value,
+# never a real secret.
+METRICS_TOKEN="${METRICS_TOKEN:-local-scrape-token}"
+METRICS=$(curl -sf -H "Authorization: Bearer ${METRICS_TOKEN}" "${API_URL}/metrics")
 for metric in streampulse_auth_logins_total streampulse_auth_registrations_total streampulse_http_requests_total; do
   if ! grep -q "^# HELP ${metric} " <<< "${METRICS}"; then
     echo "::error::Expected metric ${metric} missing from /metrics — deploy is up but unobservable"
