@@ -44,17 +44,29 @@ func main() {
 }
 
 type config struct {
-	api       string
-	listeners int
+	api string
+	// streams is how many live streams run at once. The two profiles this
+	// harness can measure are genuinely different questions: one stream with
+	// many listeners is dominated by the per-subscriber cost, many streams is
+	// dominated by the fixed cost of a hub. The brief asks both — "N auditeurs
+	// simultanés" and "combien nous coûte en CPU le streaming de 100 flux
+	// simultanés".
+	streams   int
+	listeners int // per stream
 	duration  time.Duration
 	bitrate   int
 	rampUp    time.Duration
+	// metricsToken is required once /metrics is guarded. Empty is fine
+	// against a build that leaves it open.
+	metricsToken string
 }
 
 func run() error {
 	var cfg config
 	flag.StringVar(&cfg.api, "api", "http://localhost:8080", "base URL of the API")
-	flag.IntVar(&cfg.listeners, "listeners", 100, "number of simultaneous listeners")
+	flag.IntVar(&cfg.streams, "streams", 1, "number of simultaneous live streams")
+	flag.IntVar(&cfg.listeners, "listeners", 100, "simultaneous listeners per stream")
+	flag.StringVar(&cfg.metricsToken, "metrics-token", "", "bearer token for /metrics (guarded builds)")
 	flag.DurationVar(&cfg.duration, "duration", 30*time.Second, "how long listeners stay connected")
 	flag.IntVar(&cfg.bitrate, "bitrate", 128, "broadcast bitrate in kbit/s")
 	flag.DurationVar(&cfg.rampUp, "ramp-up", 2*time.Second, "spread listener connections over this window")
@@ -63,36 +75,51 @@ func run() error {
 	if cfg.listeners < 1 {
 		return fmt.Errorf("-listeners must be at least 1")
 	}
+	if cfg.streams < 1 {
+		return fmt.Errorf("-streams must be at least 1")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.duration+2*time.Minute)
 	defer cancel()
 
-	fmt.Printf("StreamPulse load test\n  api=%s listeners=%d duration=%s bitrate=%dkbps\n\n",
-		cfg.api, cfg.listeners, cfg.duration, cfg.bitrate)
+	fmt.Printf("StreamPulse load test\n  api=%s streams=%d listeners/stream=%d (total %d) duration=%s bitrate=%dkbps\n\n",
+		cfg.api, cfg.streams, cfg.listeners, cfg.streams*cfg.listeners, cfg.duration, cfg.bitrate)
 
 	token, err := signUpBroadcaster(ctx, cfg.api)
 	if err != nil {
 		return fmt.Errorf("sign up broadcaster: %w", err)
 	}
-	streamID, err := createStream(ctx, cfg.api, token)
-	if err != nil {
-		return fmt.Errorf("create stream: %w", err)
+	streamIDs := make([]string, 0, cfg.streams)
+	for i := 0; i < cfg.streams; i++ {
+		id, err := createStream(ctx, cfg.api, token)
+		if err != nil {
+			return fmt.Errorf("create stream %d: %w", i, err)
+		}
+		streamIDs = append(streamIDs, id)
 	}
-	fmt.Printf("stream %s created\n", streamID)
+	fmt.Printf("%d stream(s) created\n", len(streamIDs))
 
-	before := readRuntimeMetrics(ctx, cfg.api)
+	before := readRuntimeMetrics(ctx, cfg)
 
-	// The broadcaster runs for the whole test; listeners attach to it.
+	// One broadcaster per stream, all running for the whole test.
 	broadcastCtx, stopBroadcast := context.WithCancel(ctx)
 	defer stopBroadcast()
-	broadcastDone := make(chan error, 1)
-	go func() { broadcastDone <- broadcast(broadcastCtx, cfg, token, streamID) }()
+	var broadcasters sync.WaitGroup
+	for _, id := range streamIDs {
+		broadcasters.Add(1)
+		go func(id string) {
+			defer broadcasters.Done()
+			_ = broadcast(broadcastCtx, cfg, token, id)
+		}(id)
+	}
 
-	// Wait for the stream to actually go live before connecting listeners: a
-	// listener that arrives first would be measuring the broadcaster's startup,
-	// not the server's fan-out.
-	if err := waitLive(ctx, cfg.api, streamID); err != nil {
-		return fmt.Errorf("stream never went live: %w", err)
+	// Wait for every stream to be live before connecting listeners: a
+	// listener that arrives first would be measuring the broadcaster's
+	// startup, not the server's fan-out.
+	for _, id := range streamIDs {
+		if err := waitLive(ctx, cfg.api, id); err != nil {
+			return fmt.Errorf("stream %s never went live: %w", id, err)
+		}
 	}
 
 	// Sample while the listeners are actually connected. Reading /metrics
@@ -102,20 +129,36 @@ func run() error {
 	// figures meaningless.
 	sampleCtx, stopSampling := context.WithCancel(ctx)
 	peakCh := make(chan runtimeSample, 1)
-	go func() { peakCh <- samplePeak(sampleCtx, cfg.api) }()
+	loadStarted := time.Now()
+	go func() { peakCh <- samplePeak(sampleCtx, cfg) }()
 
-	results := runListeners(ctx, cfg, streamID)
+	var results []listenerResult
+	var listenerGroups sync.WaitGroup
+	resultCh := make(chan []listenerResult, cfg.streams)
+	for _, id := range streamIDs {
+		listenerGroups.Add(1)
+		go func(id string) {
+			defer listenerGroups.Done()
+			resultCh <- runListeners(ctx, cfg, id)
+		}(id)
+	}
+	listenerGroups.Wait()
+	close(resultCh)
+	for r := range resultCh {
+		results = append(results, r...)
+	}
 
 	stopSampling()
 	during := <-peakCh
+	loadWindow := time.Since(loadStarted)
 	stopBroadcast()
-	<-broadcastDone
+	broadcasters.Wait()
 	// Give the server a moment to release the closed subscriptions before
 	// reading the "after" sample, otherwise it measures teardown in flight.
 	time.Sleep(2 * time.Second)
-	after := readRuntimeMetrics(ctx, cfg.api)
+	after := readRuntimeMetrics(ctx, cfg)
 
-	report(cfg, results, before, during, after)
+	report(cfg, results, before, during, after, loadWindow)
 	return nil
 }
 
@@ -308,12 +351,16 @@ type runtimeSample struct {
 	available  bool
 	heapBytes  float64
 	goroutines float64
+	// cpuSeconds is the process's cumulative CPU time. The brief asks the
+	// cost "en CPU" explicitly, and a heap figure does not answer that: a
+	// hub that costs nothing in memory can still burn a core.
+	cpuSeconds float64
 }
 
 // samplePeak polls /metrics until ctx ends and keeps the highest reading of
 // each series. Peak rather than average: the question is what the server needs
 // at its worst moment, since that is what has to fit in the machine.
-func samplePeak(ctx context.Context, api string) runtimeSample {
+func samplePeak(ctx context.Context, cfg config) runtimeSample {
 	var peak runtimeSample
 
 	ticker := time.NewTicker(250 * time.Millisecond)
@@ -324,7 +371,7 @@ func samplePeak(ctx context.Context, api string) runtimeSample {
 		case <-ctx.Done():
 			return peak
 		case <-ticker.C:
-			s := readRuntimeMetrics(ctx, api)
+			s := readRuntimeMetrics(ctx, cfg)
 			if !s.available {
 				continue
 			}
@@ -335,6 +382,8 @@ func samplePeak(ctx context.Context, api string) runtimeSample {
 			if s.goroutines > peak.goroutines {
 				peak.goroutines = s.goroutines
 			}
+			// Cumulative counter: the last reading is the highest.
+			peak.cpuSeconds = s.cpuSeconds
 		}
 	}
 }
@@ -343,12 +392,15 @@ func samplePeak(ctx context.Context, api string) runtimeSample {
 // an error: the endpoint ships with the observability ticket, and the load
 // test must stay runnable against a build without it — it then reports client
 // numbers only and says so, rather than pretending memory was measured.
-func readRuntimeMetrics(ctx context.Context, api string) runtimeSample {
+func readRuntimeMetrics(ctx context.Context, cfg config) runtimeSample {
 	var s runtimeSample
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+"/metrics", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.api+"/metrics", nil)
 	if err != nil {
 		return s
+	}
+	if cfg.metricsToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.metricsToken)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -371,6 +423,9 @@ func readRuntimeMetrics(ctx context.Context, api string) runtimeSample {
 		case strings.HasPrefix(line, "go_goroutines "):
 			s.goroutines, _ = strconv.ParseFloat(strings.Fields(line)[1], 64)
 			s.available = true
+		case strings.HasPrefix(line, "process_cpu_seconds_total "):
+			s.cpuSeconds, _ = strconv.ParseFloat(strings.Fields(line)[1], 64)
+			s.available = true
 		}
 	}
 	return s
@@ -378,7 +433,7 @@ func readRuntimeMetrics(ctx context.Context, api string) runtimeSample {
 
 // --- Report ----------------------------------------------------------------
 
-func report(cfg config, results []listenerResult, before, during, after runtimeSample) {
+func report(cfg config, results []listenerResult, before, during, after runtimeSample, loadWindow time.Duration) {
 	var connected, failed int
 	var totalBytes int64
 	ttfbs := make([]time.Duration, 0, len(results))
@@ -397,8 +452,9 @@ func report(cfg config, results []listenerResult, before, during, after runtimeS
 		}
 	}
 
+	total := cfg.streams * cfg.listeners
 	fmt.Printf("\n=== Listeners ===\n")
-	fmt.Printf("  connected            %d / %d\n", connected, cfg.listeners)
+	fmt.Printf("  connected            %d / %d\n", connected, total)
 	fmt.Printf("  failed to connect    %d\n", failed)
 
 	if len(ttfbs) > 0 {
@@ -427,17 +483,45 @@ func report(cfg config, results []listenerResult, before, during, after runtimeS
 			float64(worst)/1024, 100*float64(worst)/float64(expected))
 	}
 
-	fmt.Printf("\n=== Server memory ===\n")
+	fmt.Printf("\n=== Server cost ===\n")
 	if !before.available {
-		fmt.Printf("  /metrics unavailable on this build — client-side numbers only\n")
+		fmt.Printf("  /metrics unavailable (or token missing) — client-side numbers only\n")
 		return
 	}
 	fmt.Printf("  heap before          %.1f MiB (%.0f goroutines)\n", before.heapBytes/(1<<20), before.goroutines)
 	fmt.Printf("  heap at peak load    %.1f MiB (%.0f goroutines)\n", during.heapBytes/(1<<20), during.goroutines)
 	fmt.Printf("  heap after           %.1f MiB (%.0f goroutines)\n", after.heapBytes/(1<<20), after.goroutines)
-	if connected > 0 {
-		delta := during.heapBytes - before.heapBytes
-		fmt.Printf("  cost per listener    %.1f KiB\n", delta/float64(connected)/1024)
+
+	heapDelta := during.heapBytes - before.heapBytes
+	if heapDelta <= 0 {
+		// Refuse to divide a negative delta and present it as a cost. This
+		// happens when the process still holds un-collected heap from an
+		// earlier run: the baseline is higher than the peak, and the
+		// arithmetic produces a confident negative number. Restart the API
+		// between campaigns rather than trusting it.
+		fmt.Printf("  memory per unit      n/a — baseline (%.1f MiB) above peak (%.1f MiB);\n",
+			before.heapBytes/(1<<20), during.heapBytes/(1<<20))
+		fmt.Printf("                       the server carried heap from a previous run, restart it\n")
+	} else {
+		if connected > 0 {
+			fmt.Printf("  memory per listener  %.1f KiB\n", heapDelta/float64(connected)/1024)
+		}
+		if cfg.streams > 1 {
+			// The figure the brief asks for by name. Isolating it needs the
+			// many-streams profile: with one stream the per-hub cost hides
+			// inside the per-listener one.
+			fmt.Printf("  memory per stream    %.1f KiB\n", heapDelta/float64(cfg.streams)/1024)
+		}
+	}
+
+	cpuUsed := during.cpuSeconds - before.cpuSeconds
+	if cpuUsed > 0 && loadWindow > 0 {
+		cores := cpuUsed / loadWindow.Seconds()
+		fmt.Printf("  CPU during load      %.2f s over %s = %.2f core(s) sustained\n",
+			cpuUsed, loadWindow.Round(time.Second), cores)
+		if cfg.streams > 1 {
+			fmt.Printf("  CPU per stream       %.1f mcore\n", cores*1000/float64(cfg.streams))
+		}
 	}
 	// Goroutines returning to their baseline is the leak check: every
 	// listener's subscription goroutine must end when its connection does.
