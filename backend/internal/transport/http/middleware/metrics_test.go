@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/streampulse/backend/internal/infrastructure/observability"
@@ -76,13 +77,15 @@ func TestMetrics_CollapsesUnmatchedRoutesOntoOneLabel(t *testing.T) {
 func TestMetrics_WrappedWriterStaysFlushable(t *testing.T) {
 	// http.NewResponseController is what the live-listen handler uses; it
 	// finds the real writer by following Unwrap.
-	var flushed bool
+	//
+	// The result travels on a channel rather than a variable the test reads
+	// after http.Get returns: Get returns as soon as the response headers
+	// arrive, and Flush is exactly what sends them — so the handler is still
+	// running at that point, and reading a plain variable would be a race
+	// that fails a few runs out of a hundred.
+	flushErr := make(chan error, 1)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := http.NewResponseController(w).Flush(); err != nil {
-			t.Errorf("Flush() through the middleware error = %v, want nil — audio would never leave the buffer", err)
-			return
-		}
-		flushed = true
+		flushErr <- http.NewResponseController(w).Flush()
 	})
 
 	srv := httptest.NewServer(Metrics(next))
@@ -94,8 +97,13 @@ func TestMetrics_WrappedWriterStaysFlushable(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if !flushed {
-		t.Error("handler could not flush through the metrics middleware")
+	select {
+	case err := <-flushErr:
+		if err != nil {
+			t.Errorf("Flush() through the middleware error = %v, want nil — audio would never leave the buffer", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never reached the flush")
 	}
 }
 
