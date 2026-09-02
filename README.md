@@ -70,10 +70,12 @@ GitHub Actions : qualité Go (vet, tests race, couverture), Flutter (analyze, te
 
 | Document | Contenu |
 |---|---|
+| [`docs/cahier-des-charges.md`](docs/cahier-des-charges.md) | **Cahier des charges** : périmètre, user stories, exigences, schéma de sécurité, limites assumées |
 | [`docs/diagrams/`](docs/diagrams/README.md) | Diagrammes Mermaid : composants, modèle de données, séquences (diffusion, trace), états, déploiement |
 | [`docs/PLAN_DE_TESTS.md`](docs/PLAN_DE_TESTS.md) | Stratégie de tests, couverture mesurée, manques identifiés |
 | [`docs/CAHIER_DE_RECETTE.md`](docs/CAHIER_DE_RECETTE.md) | Attentes fonctionnelles par rôle, et le test qui vérifie chacune |
-| [`docs/adr/`](docs/adr/) | Décisions d'architecture et leurs limites assumées (FR/EN) |
+| [`docs/TEST_DE_CHARGE.md`](docs/TEST_DE_CHARGE.md) | Mesures de charge : 1000 auditeurs sur un flux, 100 flux simultanés, coût CPU |
+| [`docs/adr/`](docs/adr/) | Décisions d'architecture et leurs alternatives écartées (FR/EN) |
 | [`docs/runbooks/`](docs/runbooks/) | Réponse aux incidents et procédure de mise en production (FR/EN) |
 | [`docs/rgpd/`](docs/rgpd/), [`docs/accessibility/`](docs/accessibility/) | Registre des traitements, politique d'accessibilité |
 
