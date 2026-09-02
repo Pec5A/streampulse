@@ -12,6 +12,13 @@ services:
       # Every trace kept locally: the stack exists to be inspected, and
       # sampling would make a demo request disappear at random.
       OTEL_TRACES_SAMPLER_ARG: "1.0"
+      # Set even though development would tolerate an empty token: the guard
+      # has to be exercised by the stack people actually run, otherwise it is
+      # only ever proven by unit tests and discovered broken in production.
+      METRICS_TOKEN: ${METRICS_TOKEN:-local-scrape-token}
+      # The Flutter web build served by `flutter run -d chrome` and the CD web
+      # artefact. Nothing else: browser access stays an explicit list.
+      CORS_ALLOWED_ORIGINS: http://localhost:8081,http://127.0.0.1:8081
     ports:
       - "8080:8080"
     depends_on:

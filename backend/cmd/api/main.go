@@ -116,7 +116,13 @@ func run() error {
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
 	}
-	mux := router.New(handlers, jwtManager)
+	mux := router.New(handlers, jwtManager, router.Options{
+		Environment:      cfg.Environment,
+		AllowedOrigins:   cfg.AllowedOrigins,
+		MetricsToken:     cfg.MetricsToken,
+		AuthRateLimit:    cfg.AuthRateLimit,
+		TrustedProxyHops: cfg.TrustedProxyHops,
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
