@@ -51,17 +51,20 @@ func run() error {
 	slog.Info("migrations applied")
 
 	userRepo := persistence.NewUserRepository(db)
+	playlistRepo := persistence.NewPlaylistRepository(db)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTExpiration)
 	hasher := auth.NewBcryptHasher()
 
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
 	adminUC := usecase.NewAdminUseCase(userRepo)
+	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
 	handlers := router.Handlers{
-		Auth:  handler.NewAuthHandler(authUC),
-		User:  handler.NewUserHandler(userUC),
-		Admin: handler.NewAdminHandler(adminUC),
+		Auth:     handler.NewAuthHandler(authUC),
+		User:     handler.NewUserHandler(userUC),
+		Admin:    handler.NewAdminHandler(adminUC),
+		Playlist: handler.NewPlaylistHandler(playlistUC),
 	}
 	mux := router.New(handlers, jwtManager)
 

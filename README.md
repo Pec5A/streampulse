@@ -1,34 +1,46 @@
 # StreamPulse
 
-> Plateforme de streaming audio temps réel — Projet Semestriel 5A TL, S2 Bloc 3 (RNCP 38822) — École .decode.
+> Plateforme de streaming audio temps réel — Projet Semestriel 5A TL, S2 Bloc 3 (RNCP 38822) — École .decode. English version: [`README.en.md`](README.en.md).
 
 StreamPulse permet à un *broadcaster* de diffuser un flux audio en direct vers N *listeners* simultanés, via une API Go et une application mobile Flutter. Construit par une équipe de 3, chacun responsable d'une tranche verticale complète (fonctionnalité + tests + CI/monitoring + documentation).
 
-## Structure du projet
+## Architecture
+- **Backend** (`backend/`) — Go, **Clean Architecture** (`domain` / `application` / `infrastructure` / `transport`), PostgreSQL via `database/sql` + pgx (sans ORM), routeur `net/http` standard, auth JWT. Décisions dans [`docs/adr/`](docs/adr/).
+- **Mobile** (`mobile/`) — Flutter, gestion d'état `flutter_bloc`, structure par fonctionnalité (`lib/features/<feature>/{bloc,repository,screens,models}`).
 
-```
-.
-├── backend/          # API Go (bootstrap minimal : /health uniquement pour l'instant)
-├── mobile/           # App Flutter (scaffold par défaut pour l'instant)
-├── deployments/       # Docker, docker-compose, K8s, observabilité (à construire)
-├── docs/
-│   └── team/
-│       ├── plan.md    # Répartition des tickets par membre
-│       └── setup.md   # Setup git, signature GPG, workflow PR
-└── .github/           # CODEOWNERS, templates PR/issue, CI
-```
+## Fonctionnalités
+Le statut est relatif à `main` ; les fonctionnalités encore en PR ouverte sont signalées.
+- **Auth** — inscription / connexion / refresh (JWT, bcrypt). *Sur `main`.*
+- **Admin** — gestion des rôles, liste des utilisateurs, statistiques (réservé admin). *Sur `main`.*
+- **Scan de sécurité** — gitleaks, trivy, govulncheck en CI. *Sur `main`.*
+- **Accessibilité** — libellés `Semantics`, cibles tactiles agrandies, layout responsive, contraste Material 3 (livré avec l'admin). *Sur `main`.*
+- **Playlists** — CRUD + réordonnancement transactionnel des pistes, + cache offline. *En review (PR #16, #19).*
+- **RGPD** — export des données personnelles & suppression de compte. *En review (PR #14).*
+- **Streaming live & upload audio** — la fonctionnalité phare de la plateforme. *En cours dans des PR ouvertes (#22, #23) ; pas encore sur `main`.*
 
 ## Démarrage
-
 ```bash
-cd backend && go build ./... && go test ./...
-cd mobile && flutter pub get && flutter analyze && flutter test
+# Backend (nécessite PostgreSQL)
+cd backend
+DATABASE_URL=postgres://user:pass@localhost:5432/streampulse?sslmode=disable \
+  JWT_SECRET=change-me-to-at-least-32-characters go run ./cmd/api
+
+# Mobile
+cd mobile
+flutter pub get
+flutter run --dart-define=API_URL=http://localhost:8080
 ```
 
-## Équipe et répartition
+## Tests & CI
+```bash
+cd backend && go test -race -cover ./...
+cd mobile && flutter analyze && flutter test
+```
+GitHub Actions : qualité Go (vet, tests race, couverture), Flutter (analyze, test), et scan de sécurité (gitleaks + trivy + govulncheck).
 
-Voir [`CONTRIBUTORS.md`](CONTRIBUTORS.md) et [`docs/team/plan.md`](docs/team/plan.md).
+## Équipe et workflow
+SamyZ ([@SamyNikaia](https://github.com/SamyNikaia)), Yassir ([@JASSBR](https://github.com/JASSBR)), KaysZ ([@monkeyDkz](https://github.com/monkeyDkz)).
+**Commits signés obligatoires** (badge « Verified »). Une PR par ticket, review croisée, jamais de self-merge. Voir [`docs/team/`](docs/team/) et [`docs/team/branch-protection.md`](docs/team/branch-protection.md).
 
 ## Licence
-
 Distribué sous licence MIT. Voir [`LICENSE`](LICENSE).
