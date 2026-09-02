@@ -35,3 +35,6 @@ mobile/coverage/
 
 # OS
 .DS_Store
+
+# Uploaded audio files (ticket K2) — runtime data, never committed.
+backend/uploads/

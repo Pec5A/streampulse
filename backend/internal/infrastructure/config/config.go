@@ -16,6 +16,8 @@ type Config struct {
 	JWTSecret     string
 	JWTExpiration time.Duration
 	Environment   string
+	// StoragePath is where uploaded audio files are written (ticket K2).
+	StoragePath string
 
 	// --- Durcissement pré-production ---
 
@@ -53,6 +55,10 @@ func Load() (*Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Environment: getEnv("ENVIRONMENT", "development"),
+		// Défaut absolu et non "./uploads" : l'étape finale de l'image n'a pas
+		// de WORKDIR, donc un chemin relatif résout en /uploads, que
+		// l'utilisateur non-root du conteneur ne peut pas créer.
+		StoragePath: getEnv("STORAGE_PATH", "/var/lib/streampulse/uploads"),
 
 		AllowedOrigins: splitAndTrim(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		MetricsToken:   os.Getenv("METRICS_TOKEN"),

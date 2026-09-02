@@ -17,6 +17,17 @@ FROM alpine:3.20
 RUN apk --no-cache add ca-certificates tzdata wget \
     && addgroup -S app && adduser -S -G app app
 COPY --from=builder /out/api /usr/local/bin/api
+
+# Ticket K2: uploaded audio files live here.
+#
+# Both lines matter. The image has no WORKDIR, so the config default of
+# ./uploads resolves to /uploads — which `app` cannot create, and the process
+# refuses to start rather than run without a place to put uploads. Pointing
+# STORAGE_PATH at a directory that exists and is owned before the USER switch
+# removes the whole class of problem.
+ENV STORAGE_PATH=/var/lib/streampulse/uploads
+RUN mkdir -p "$STORAGE_PATH" && chown -R app:app /var/lib/streampulse
+
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \

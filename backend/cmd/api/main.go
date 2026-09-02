@@ -18,6 +18,7 @@ import (
 	"github.com/streampulse/backend/internal/infrastructure/config"
 	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/persistence"
+	"github.com/streampulse/backend/internal/infrastructure/storage"
 	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/handler"
 	"github.com/streampulse/backend/internal/transport/http/router"
@@ -88,6 +89,7 @@ func run() error {
 
 	userRepo := persistence.NewUserRepository(db)
 	streamRepo := persistence.NewStreamRepository(db)
+	trackRepo := persistence.NewTrackRepository(db)
 	playlistRepo := persistence.NewPlaylistRepository(db)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTExpiration)
 	hasher := auth.NewBcryptHasher()
@@ -102,9 +104,16 @@ func run() error {
 	chatRegistry := streaming.NewChatRegistry()
 	defer chatRegistry.CloseAll()
 
+	fileStore, err := storage.NewLocal(cfg.StoragePath)
+	if err != nil {
+		return err
+	}
+	slog.Info("file storage ready", "path", cfg.StoragePath)
+
 	authUC := usecase.NewAuthUseCase(userRepo, jwtManager, hasher)
 	userUC := usecase.NewUserUseCase(userRepo)
 	streamUC := usecase.NewStreamUseCase(streamRepo, userRepo, registry, chatRegistry)
+	trackUC := usecase.NewTrackUseCase(trackRepo, fileStore)
 	adminUC := usecase.NewAdminUseCase(userRepo)
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
@@ -113,6 +122,7 @@ func run() error {
 		Auth:     handler.NewAuthHandler(authUC),
 		User:     handler.NewUserHandler(userUC),
 		Stream:   handler.NewStreamHandler(streamUC),
+		Track:    handler.NewTrackHandler(trackUC),
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
 	}
