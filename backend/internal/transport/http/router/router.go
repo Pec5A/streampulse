@@ -11,7 +11,18 @@ import (
 	"github.com/streampulse/backend/internal/transport/http/middleware"
 )
 
+// BuildInfo identifies the running binary. Reported by /health so that
+// "which version is actually deployed" is answerable from outside the
+// cluster — a rollback decision cannot wait on somebody SSHing in to read
+// an image tag.
+type BuildInfo struct {
+	Version string
+	Commit  string
+}
+
 type Handlers struct {
+	Build BuildInfo
+
 	Auth     *handler.AuthHandler
 	Admin    *handler.AdminHandler
 	Playlist *handler.PlaylistHandler
@@ -22,7 +33,17 @@ func New(h Handlers, jwtManager *auth.JWTManager) http.Handler {
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		body := map[string]string{"status": "ok"}
+		// Omitted rather than reported empty when the binary was not built
+		// through the release pipeline: an empty version string in a probe
+		// response is worse than no field, it looks like a deployed unknown.
+		if h.Build.Version != "" {
+			body["version"] = h.Build.Version
+		}
+		if h.Build.Commit != "" {
+			body["commit"] = h.Build.Commit
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 
 	mux.HandleFunc("POST /api/v1/auth/register", h.Auth.Register)

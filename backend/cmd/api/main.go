@@ -20,6 +20,14 @@ import (
 	"github.com/streampulse/backend/internal/transport/http/router"
 )
 
+// Overwritten at build time by the Dockerfile's -ldflags -X. Declared here
+// because -X on a symbol that does not exist is silently ignored: the build
+// looked stamped while every image reported nothing.
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -52,6 +60,7 @@ func run() error {
 	playlistUC := usecase.NewPlaylistUseCase(playlistRepo)
 
 	handlers := router.Handlers{
+		Build:    router.BuildInfo{Version: version, Commit: commit},
 		Auth:     handler.NewAuthHandler(authUC),
 		Admin:    handler.NewAdminHandler(adminUC),
 		Playlist: handler.NewPlaylistHandler(playlistUC),
