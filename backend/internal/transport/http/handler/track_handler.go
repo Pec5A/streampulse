@@ -63,6 +63,10 @@ func (h *TrackHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// refused while it streams, instead of after we have read all of it.
 	r.Body = http.MaxBytesReader(w, r.Body, usecase.MaxUploadBytes+multipartOverhead)
 
+	// #nosec G120 -- the body is already bounded by the MaxBytesReader on the
+	// line above, so this parse cannot grow past MaxUploadBytes+overhead.
+	// gosec cannot see that relationship across statements. Proven by
+	// TestTrackHandler_UploadRejectsAnOversizedBody, which asserts a 413.
 	if err := r.ParseMultipartForm(multipartMemory); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
