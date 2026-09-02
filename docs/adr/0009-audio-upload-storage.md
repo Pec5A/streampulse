@@ -58,9 +58,37 @@ Mais — et c'est le point non évident — **on renifle pour *rejeter*, pas pou
 *autoriser***. `http.DetectContentType` ne connaît qu'une poignée de
 conteneurs : un MP3 sans tag ID3, un AAC ou un FLAC ressortent tous en
 `application/octet-stream`. Un allowlist sur le reniflage rejetterait donc des
-fichiers audio parfaitement valides. Ce qui compte réellement pour la sécurité,
-c'est que le contenu ne soit pas du **contenu actif** (HTML, SVG, XML, JS,
-PDF) — et c'est précisément ce que le renifleur détecte de façon fiable.
+fichiers audio parfaitement valides.
+
+**Première version, et pourquoi elle était fausse.** Le rejet s'appuyait
+d'abord sur une liste de types MIME dangereux incluant `image/svg+xml`,
+`application/javascript` et `application/xml`. La review de la PR #23
+(@JASSBR, élargie par @SamyNikaia) a montré que **`http.DetectContentType`
+n'émet jamais ces chaînes**. Vérifié contre le vrai renifleur :
+
+```
+<svg> sans prologue XML  -> text/plain; charset=utf-8
+<svg> avec prologue XML  -> text/xml; charset=utf-8    (attrapé par hasard)
+JavaScript brut          -> text/plain; charset=utf-8
+XML sans prologue        -> text/plain; charset=utf-8
+HTML avec doctype        -> text/html; charset=utf-8
+```
+
+Quatre des huit entrées étaient donc des chaînes mortes, et une SVG ou un JS
+malveillant passaient. Poursuivre avec des signatures par format (`<svg`,
+`<script`, …) est une course perdue contre chaque futur payload texte.
+
+**La règle retenue** est structurelle et ne se contourne pas en enlevant un
+prologue : **l'audio est binaire, donc l'audio ne sniffe jamais en texte** — et
+tout contenu actif est du texte. Un seul test (`strings.HasPrefix(sniffed,
+"text/")`) remplace la liste. Il reste `dangerousBinaryTypes` pour les rares
+types **non-texte** que le renifleur produit vraiment et qu'un navigateur
+exécuterait : `application/pdf`, `application/postscript`,
+`application/x-shockwave-flash`.
+
+Limite résiduelle assumée : un fichier audio de moins de 512 octets ne
+contenant aucun octet < 0x20 serait refusé. Aucun conteneur réel ne produit
+ça.
 
 Défense en profondeur côté service : l'audio est renvoyé avec le type validé à
 l'upload (jamais un type reniflé), plus `X-Content-Type-Options: nosniff` et
