@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
+
 	domainstorage "github.com/streampulse/backend/internal/domain/storage"
 )
 
@@ -24,12 +26,15 @@ const (
 // ErrInvalidKey is returned for a key that would escape the base directory.
 var ErrInvalidKey = errors.New("invalid storage key")
 
-// Local stores objects as files under BasePath.
+// Local stores objects as files under a directory, accessed through an
+// *os.Root so the confinement is enforced by the operating system rather than
+// by string checks of our own.
 type Local struct {
 	basePath string
+	root     *os.Root
 }
 
-// NewLocal creates the base directory if needed.
+// NewLocal creates the base directory if needed and opens it as a root.
 func NewLocal(basePath string) (*Local, error) {
 	abs, err := filepath.Abs(basePath)
 	if err != nil {
@@ -38,84 +43,86 @@ func NewLocal(basePath string) (*Local, error) {
 	if err := os.MkdirAll(abs, dirPerm); err != nil {
 		return nil, fmt.Errorf("create storage dir: %w", err)
 	}
-	return &Local{basePath: abs}, nil
+	// os.Root holds a descriptor on the directory: every subsequent Open,
+	// Create, Rename and Remove is resolved relative to it and refuses to
+	// escape, symlinks included. That is a kernel-enforced boundary, not a
+	// prefix comparison we could get subtly wrong.
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, fmt.Errorf("open storage root: %w", err)
+	}
+	return &Local{basePath: abs, root: root}, nil
 }
+
+// Close releases the descriptor held on the base directory.
+func (l *Local) Close() error { return l.root.Close() }
 
 var _ domainstorage.Storage = (*Local)(nil)
 
-// resolve turns a key into an absolute path confined to basePath.
+// validateKey rejects anything that is not a plain, single-segment name.
 //
-// This is the security boundary of the whole package. Even though keys are
-// generated server-side today, a key that reaches here from user input must
-// never be able to write outside the upload directory — so traversal is
-// rejected structurally rather than by trusting the caller.
-func (l *Local) resolve(key string) (string, error) {
+// os.Root already makes escaping the base directory impossible, so this is no
+// longer the security boundary — it is the *contract*: a storage key names one
+// object, not a path. Keeping it means a malformed key fails with a clear
+// ErrInvalidKey instead of a filesystem error, and it keeps the door shut on
+// platforms where os.Root is documented as weaker (js, plan9).
+func validateKey(key string) error {
 	if key == "" || strings.ContainsRune(key, 0) {
-		return "", ErrInvalidKey
+		return ErrInvalidKey
 	}
-	// Reject anything that is not a plain, single-segment name.
 	if filepath.IsAbs(key) || strings.ContainsAny(key, `/\`) {
-		return "", ErrInvalidKey
+		return ErrInvalidKey
 	}
 	if key == "." || key == ".." {
-		return "", ErrInvalidKey
+		return ErrInvalidKey
 	}
-
-	full := filepath.Join(l.basePath, key)
-
-	// Belt and braces: even after the checks above, verify the result really
-	// is inside basePath.
-	rel, err := filepath.Rel(l.basePath, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", ErrInvalidKey
-	}
-	return full, nil
+	return nil
 }
 
 func (l *Local) Save(_ context.Context, key string, r io.Reader) (int64, error) {
-	path, err := l.resolve(key)
-	if err != nil {
+	if err := validateKey(key); err != nil {
 		return 0, err
 	}
 
-	// Write to a temporary file first, then rename: a crash mid-upload
-	// leaves no half-written object that a listener could later stream as
-	// if it were complete. Rename is atomic within a filesystem.
-	tmp, err := os.CreateTemp(l.basePath, ".upload-*")
+	// Write to a temporary name first, then rename: a crash mid-upload leaves
+	// no half-written object that a listener could later stream as if it were
+	// complete. Rename is atomic within a filesystem, and os.Root.Rename keeps
+	// both names confined to the base directory.
+	tmp := ".upload-" + uuid.NewString()
+	f, err := l.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
-		return 0, fmt.Errorf("create temp file: %w", err)
+		return 0, fmt.Errorf("create temp object: %w", err)
 	}
-	tmpName := tmp.Name()
+	committed := false
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName) // no-op once the rename succeeded
+		_ = f.Close()
+		if !committed {
+			_ = l.root.Remove(tmp)
+		}
 	}()
 
-	written, err := io.Copy(tmp, r)
+	written, err := io.Copy(f, r)
 	if err != nil {
 		return 0, fmt.Errorf("write object: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
 		return 0, fmt.Errorf("sync object: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return 0, fmt.Errorf("close object: %w", err)
 	}
-	if err := os.Chmod(tmpName, filePerm); err != nil {
-		return 0, fmt.Errorf("chmod object: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := l.root.Rename(tmp, key); err != nil {
 		return 0, fmt.Errorf("commit object: %w", err)
 	}
+	committed = true
 	return written, nil
 }
 
 func (l *Local) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
-	path, err := l.resolve(key)
-	if err != nil {
+	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(path) //nolint:gosec // path is confined by resolve
+	f, err := l.root.Open(key)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, domainstorage.ErrNotFound
 	}
@@ -126,11 +133,10 @@ func (l *Local) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
 }
 
 func (l *Local) Delete(_ context.Context, key string) error {
-	path, err := l.resolve(key)
-	if err != nil {
+	if err := validateKey(key); err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil {
+	if err := l.root.Remove(key); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return domainstorage.ErrNotFound
 		}
@@ -140,11 +146,10 @@ func (l *Local) Delete(_ context.Context, key string) error {
 }
 
 func (l *Local) Exists(_ context.Context, key string) (bool, error) {
-	path, err := l.resolve(key)
-	if err != nil {
+	if err := validateKey(key); err != nil {
 		return false, err
 	}
-	switch _, err := os.Stat(path); {
+	switch _, err := l.root.Stat(key); {
 	case err == nil:
 		return true, nil
 	case errors.Is(err, os.ErrNotExist):
