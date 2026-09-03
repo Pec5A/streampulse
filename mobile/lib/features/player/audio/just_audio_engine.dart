@@ -20,6 +20,15 @@ class JustAudioEngine implements AudioEngine {
   bool _wasPlayingBeforeInterruption = false;
   double _volumeBeforeDuck = 1;
 
+  /// The current source, kept so a live stream can be rejoined after its
+  /// connection has been released. See [pause].
+  String? _source;
+  bool _isLive = false;
+
+  /// True once a live connection has been dropped on purpose, so the next
+  /// [play] knows it has to reconnect rather than resume.
+  bool _released = false;
+
   /// Configures the OS audio session. Must be awaited once before playing:
   /// without it, Android will not grant audio focus and iOS will not keep
   /// playing when the screen locks.
@@ -101,17 +110,47 @@ class JustAudioEngine implements AudioEngine {
     // A live broadcast is an endless chunked response: there is nothing to
     // preload and no duration to discover, so we do not wait on the future
     // just_audio returns for a finite track.
+    _source = url;
+    _isLive = isLive;
+    _released = false;
     await _player.setUrl(url);
   }
 
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    // Rejoin rather than resume: the connection was released, and there is no
+    // position to come back to anyway — the broadcast carried on without us.
+    if (_released && _source != null) {
+      _released = false;
+      await _player.setUrl(_source!);
+    }
+    await _player.play();
+  }
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() async {
+    if (!_isLive) {
+      await _player.pause();
+      return;
+    }
+    // Pausing a live stream does not pause the broadcast. The connection stays
+    // open while we stop consuming it, so the server's per-listener buffer
+    // fills and it evicts us as a slow consumer — by design, that is how the
+    // hub keeps its memory bounded. Resuming then finds a socket the server
+    // has already closed, which is why a long pause used to be unrecoverable.
+    // Releasing here makes the reconnection ours to perform, not the server's
+    // to force.
+    _released = true;
+    await _player.stop();
+  }
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() async {
+    // Same reasoning as [pause] for a live source: what is stopped is gone,
+    // and coming back means opening a new connection.
+    _released = _isLive;
+    await _player.stop();
+  }
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
