@@ -107,14 +107,23 @@ class JustAudioEngine implements AudioEngine {
 
   @override
   Future<void> setSource(String url, {required bool isLive}) async {
-    // A live broadcast is an endless chunked response: there is nothing to
-    // preload and no duration to discover, so we do not wait on the future
-    // just_audio returns for a finite track.
     _source = url;
     _isLive = isLive;
     _released = false;
-    await _player.setUrl(url);
+    await _open(url);
   }
+
+  /// Points just_audio at [url], preloading only when there is something to
+  /// preload.
+  ///
+  /// A live broadcast is an endless response with no duration to discover, and
+  /// it arrives at the speed the audio plays. Waiting for `setUrl` to report a
+  /// loaded source therefore waits on bytes that only exist in real time — the
+  /// call returns late, or not at all. `preload: false` hands control back
+  /// immediately and lets `play` drive the loading, which is what a stream
+  /// needs and what the comment here always claimed was happening.
+  Future<void> _open(String url) =>
+      _isLive ? _player.setUrl(url, preload: false) : _player.setUrl(url);
 
   @override
   Future<void> play() async {
@@ -122,7 +131,7 @@ class JustAudioEngine implements AudioEngine {
     // position to come back to anyway — the broadcast carried on without us.
     if (_released && _source != null) {
       _released = false;
-      await _player.setUrl(_source!);
+      await _open(_source!);
     }
     await _player.play();
   }
