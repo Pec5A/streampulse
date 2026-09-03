@@ -83,6 +83,109 @@ void main() {
     });
   });
 
+  group('mpegBytesPerSecond', () {
+    test('reads a constant 128 kbps stream', () {
+      expect(mpegBytesPerSecond(_mp3(bitrateIndex: 9, frames: 3)), 16000);
+    });
+
+    test('reads a constant 192 kbps stream', () {
+      // The rate that exposed the bug: paced at the old fixed 16 KiB/s, a
+      // file like this reaches the listener at two thirds of playback speed.
+      expect(mpegBytesPerSecond(_mp3(bitrateIndex: 11, frames: 3)), 24000);
+    });
+
+    test('prefers the Xing average over the frame header for a VBR file', () {
+      // The first frame says 128 kbps; the Xing block says the file really
+      // averages 245 kbps. Pacing on the header would starve the listener
+      // for the whole broadcast.
+      final bytes = _mp3(bitrateIndex: 9, frames: 3, xingFrames: 1000, xingBytes: 800000);
+
+      // 1000 frames x 1152 samples / 44100 Hz = 26.12 s for 800000 bytes.
+      expect(mpegBytesPerSecond(bytes), 30625);
+    });
+
+    test('finds the audio behind an ID3v2 tag', () {
+      // Cover art routinely pushes the first frame past 100 KiB. A scan that
+      // gave up early would fall back on every tagged file — which is most
+      // of them.
+      final bytes = [..._id3(60000), ..._mp3(bitrateIndex: 11, frames: 3)];
+      expect(mpegBytesPerSecond(bytes), 24000);
+    });
+
+    test('returns null for bytes that are not MPEG audio', () {
+      expect(mpegBytesPerSecond(List<int>.filled(4096, 0x41)), isNull);
+    });
+
+    test('returns null when the stream is shorter than one frame', () {
+      // A header alone is not proof: the caller must keep feeding rather than
+      // pace the whole broadcast on four bytes that merely look right.
+      final truncated = _mp3(bitrateIndex: 9, frames: 1).sublist(0, 100);
+      expect(mpegBytesPerSecond(truncated), isNull);
+    });
+
+    test('ignores a sync pattern that no real frame follows', () {
+      // 0xFF 0xFB occurs by chance inside cover art. Accepting the first
+      // match would give a confident wrong answer.
+      final decoy = <int>[0xFF, 0xFB, 0x90, 0x00, ...List<int>.filled(200, 0x00)];
+      expect(mpegBytesPerSecond(decoy), isNull);
+    });
+  });
+
+  group('pacedSource rate detection', () {
+    test('paces a 192 kbps file at its own rate, not the fallback', () async {
+      final waits = <Duration>[];
+
+      await pacedSource(
+        Stream<List<int>>.value(_mp3(bitrateIndex: 11, frames: 40)),
+        chunkSize: 4096,
+        delay: (d) async => waits.add(d),
+      ).toList();
+
+      // 24000 B/s: 4096 bytes take 170.67 ms, not the 250 ms the old fixed
+      // 16 KiB/s imposed.
+      expect(waits, isNotEmpty);
+      expect(waits.first, const Duration(microseconds: 170667));
+    });
+
+    test('falls back to 16 KiB/s when the bytes name no rate', () async {
+      final waits = <Duration>[];
+
+      await pacedSource(
+        Stream<List<int>>.value(List<int>.filled(9000, 0x41)),
+        chunkSize: 4096,
+        delay: (d) async => waits.add(d),
+      ).toList();
+
+      expect(fallbackBytesPerSecond, 16 * 1024);
+      expect(waits.first, const Duration(milliseconds: 250));
+    });
+
+    test('an explicit rate wins over what the bytes say', () async {
+      final waits = <Duration>[];
+
+      await pacedSource(
+        Stream<List<int>>.value(_mp3(bitrateIndex: 11, frames: 40)),
+        chunkSize: 4096,
+        bytesPerSecond: 8192,
+        delay: (d) async => waits.add(d),
+      ).toList();
+
+      expect(waits.first, const Duration(milliseconds: 500));
+    });
+
+    test('still emits every byte once the rate is detected', () async {
+      final source = _mp3(bitrateIndex: 9, frames: 10);
+
+      final emitted = await pacedSource(
+        Stream<List<int>>.value(source),
+        chunkSize: 512,
+        delay: (_) async {},
+      ).toList();
+
+      expect(emitted.expand((c) => c).toList(), source);
+    });
+  });
+
   group('HttpBroadcastTransport', () {
     test('streams the source to the publish endpoint with the bearer token', () async {
       final client = _CapturingClient();
@@ -174,3 +277,50 @@ void main() {
     });
   });
 }
+
+/// Builds MPEG-1 Layer III frames at 44.1 kHz, stereo.
+///
+/// [bitrateIndex] is the index in the layer's bitrate table: 9 is 128 kbps,
+/// 11 is 192 kbps. When [xingFrames] is given, a Xing block is written into
+/// the first frame so a variable-bitrate file can be simulated.
+List<int> _mp3({
+  required int bitrateIndex,
+  required int frames,
+  int? xingFrames,
+  int? xingBytes,
+}) {
+  const bitrates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+  final length = 144 * bitrates[bitrateIndex] * 1000 ~/ 44100;
+
+  final out = <int>[];
+  for (var f = 0; f < frames; f++) {
+    final frame = <int>[
+      0xFF, // sync
+      0xFB, // sync + MPEG1 + Layer III + no CRC
+      (bitrateIndex << 4), // bitrate index, 44.1 kHz, no padding
+      0x00, // stereo
+    ];
+    if (f == 0 && xingFrames != null && xingBytes != null) {
+      frame.addAll(List<int>.filled(32, 0)); // side info, MPEG1 stereo
+      frame.addAll('Xing'.codeUnits);
+      frame.addAll(_be32(0x3)); // flags: frame count + byte count present
+      frame.addAll(_be32(xingFrames));
+      frame.addAll(_be32(xingBytes));
+    }
+    frame.addAll(List<int>.filled(length - frame.length, 0));
+    out.addAll(frame);
+  }
+  return out;
+}
+
+/// An ID3v2 tag of [payload] bytes, filled with a byte that is not a sync.
+List<int> _id3(int payload) => [
+      0x49, 0x44, 0x33, // "ID3"
+      0x04, 0x00, // version
+      0x00, // no footer
+      // Syncsafe size: seven bits per byte.
+      (payload >> 21) & 0x7f, (payload >> 14) & 0x7f, (payload >> 7) & 0x7f, payload & 0x7f,
+      ...List<int>.filled(payload, 0x5A),
+    ];
+
+List<int> _be32(int v) => [(v >> 24) & 0xff, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
