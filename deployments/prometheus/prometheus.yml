@@ -25,3 +25,28 @@ scrape_configs:
     authorization:
       type: Bearer
       credentials: local-scrape-token
+
+  # Le backend deploye sur Render. Meme metriques, memes dashboards : les
+  # panneaux ne filtrent pas sur `job`, donc ils affichent les deux sources
+  # superposees — selectionner l'une ou l'autre se fait dans Grafana.
+  #
+  # Le jeton n'est pas ecrit ici mais lu dans un fichier monte depuis l'hote
+  # et absent du depot : contrairement au jeton local juste au-dessus, c'est
+  # un vrai secret de production, genere par Render et jamais relu.
+  #
+  # Sans ce fichier, Prometheus refuse de demarrer. C'est voulu : une cible de
+  # production qui echoue silencieusement ne se voit que comme un trou dans
+  # les courbes, au pire moment.
+  - job_name: streampulse-api-prod
+    scheme: https
+    static_configs:
+      - targets: ["streampulse-api-j46j.onrender.com"]
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/prod-token
+    # Le plan gratuit de Render endort le service apres inactivite, et le
+    # reveil prend plusieurs secondes. Un timeout court transformerait chaque
+    # reveil en scrape perdu.
+    scrape_timeout: 30s
+    scrape_interval: 30s

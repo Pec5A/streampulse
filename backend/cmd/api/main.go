@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
 	"github.com/streampulse/backend/internal/infrastructure/config"
@@ -103,6 +105,23 @@ func run() error {
 	defer registry.CloseAll()
 	chatRegistry := streaming.NewChatRegistry()
 	defer chatRegistry.CloseAll()
+
+	// The streaming metrics are read from the registry at scrape time. This
+	// adapter is the only place the two packages meet: observability declares
+	// the shape it needs, streaming owns the numbers, and neither imports the
+	// other. Registered on the default registerer, which is what promhttp
+	// serves on /metrics.
+	prometheus.MustRegister(observability.NewStreamingCollector(func() observability.StreamingTotals {
+		t := registry.Totals()
+		return observability.StreamingTotals{
+			ActiveStreams:   t.ActiveStreams,
+			ActiveListeners: t.ActiveListeners,
+			SessionsStarted: t.SessionsStarted,
+			BytesPublished:  t.BytesPublished,
+			ChunksDropped:   t.ChunksDropped,
+			Evictions:       t.Evictions,
+		}
+	}))
 
 	fileStore, err := storage.NewLocal(cfg.StoragePath)
 	if err != nil {

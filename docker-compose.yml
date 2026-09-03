@@ -80,6 +80,11 @@ services:
     volumes:
       - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deployments/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Jeton de scrape du backend deploye. Absent du depot (.gitignore) : a
+      # creer localement avec la valeur generee par Render, sinon Prometheus
+      # refuse de demarrer plutot que de laisser la cible de production
+      # echouer en silence.
+      - ./deployments/prometheus/prod-token:/etc/prometheus/prod-token:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"

@@ -3,17 +3,36 @@
   "uid": "streampulse-auth",
   "schemaVersion": 39,
   "timezone": "browser",
-  "time": { "from": "now-6h", "to": "now" },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "refresh": "30s",
-  "tags": ["streampulse", "auth"],
+  "tags": [
+    "streampulse",
+    "auth"
+  ],
   "panels": [
     {
       "id": 1,
       "title": "Connexions par résultat (métier)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (result) (rate(streampulse_auth_logins_total[5m]))",
@@ -26,9 +45,22 @@
       "id": 2,
       "title": "Inscriptions par résultat (métier)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (result) (rate(streampulse_auth_registrations_total[5m]))",
@@ -41,17 +73,34 @@
       "id": 3,
       "title": "Taux d'erreur HTTP 5xx (technique)",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 0.01 },
-              { "color": "red", "value": 0.05 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
             ]
           }
         },
@@ -69,34 +118,61 @@
       "id": 4,
       "title": "Latence HTTP p50 / p95 / p99 (technique)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket{path!~\"/api/v1/streams/.*/(listen|publish|chat)(/ws)?\", path!~\"/(health|metrics)\"}[5m])))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket{path!~\"/api/v1/streams/.*/(listen|publish|chat)(/ws)?\", path!~\"/(health|metrics)\"}[5m])))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(streampulse_http_request_duration_seconds_bucket{path!~\"/api/v1/streams/.*/(listen|publish|chat)(/ws)?\", path!~\"/(health|metrics)\"}[5m])))",
           "legendFormat": "p99",
           "refId": "C"
         }
-      ]
+      ],
+      "description": "Latence des requêtes courtes uniquement. Les routes de direct (listen, publish, chat) sont exclues : leur durée est celle de la diffusion — plusieurs minutes — et non un temps de réponse ; les inclure faisait monter le p99 à une dizaine de secondes dès qu'un direct tournait. /health et /metrics sont exclus aussi, leur volume écrasait le p50 sous du trafic de supervision."
     },
     {
       "id": 5,
       "title": "Requêtes HTTP par route et statut (technique)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (path, status) (rate(streampulse_http_requests_total[5m]))",

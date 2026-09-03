@@ -1,0 +1,334 @@
+{
+  "title": "StreamPulse — Direct (métier)",
+  "uid": "streampulse-streaming",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "10s",
+  "tags": [
+    "streampulse",
+    "metier",
+    "streaming"
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Flux en direct",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "streampulse_active_streams",
+          "legendFormat": "flux",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Auditeurs connectés",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "streampulse_active_listeners",
+          "legendFormat": "auditeurs",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Auditeurs par flux (moyenne)",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "description": "Les séries ne portent pas d'étiquette par flux : une étiquette par identifiant de diffusion créerait une cardinalité non bornée. Le détail par flux se lit dans les traces.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "streampulse_active_listeners / clamp_min(streampulse_active_streams, 1)",
+          "legendFormat": "moyenne",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Débit diffusé",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(streampulse_broadcast_bytes_total[1m])",
+          "legendFormat": "débit",
+          "refId": "A"
+        }
+      ],
+      "description": "Octets reçus des diffuseurs, comptés une fois par chunk quelle que soit l'audience. Ce n'est donc pas la bande passante sortante : avec N auditeurs, l'egress réel vaut environ N fois cette valeur. À ne pas utiliser tel quel pour dimensionner la sortie réseau."
+    },
+    {
+      "id": 5,
+      "title": "Flux et auditeurs dans le temps",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "streampulse_active_streams",
+          "legendFormat": "flux en direct",
+          "refId": "A"
+        },
+        {
+          "expr": "streampulse_active_listeners",
+          "legendFormat": "auditeurs",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Débit de diffusion",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(streampulse_broadcast_bytes_total[1m])",
+          "legendFormat": "octets/s reçus des diffuseurs",
+          "refId": "A"
+        }
+      ],
+      "description": "Octets reçus des diffuseurs, comptés une fois par chunk quelle que soit l'audience. Ce n'est donc pas la bande passante sortante : avec N auditeurs, l'egress réel vaut environ N fois cette valeur. À ne pas utiliser tel quel pour dimensionner la sortie réseau."
+    },
+    {
+      "id": 7,
+      "title": "Auditeurs en retard (santé de la diffusion)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "description": "Un chunk lâché signifie qu'un auditeur n'absorbait pas assez vite : la diffusion ne bloque jamais, elle abandonne le chunk. Des éviction répétées désignent un auditeur durablement trop lent, pas une panne du serveur.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(streampulse_listener_chunks_dropped_total[5m])",
+          "legendFormat": "chunks lâchés/s",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(streampulse_listener_evictions_total[5m])",
+          "legendFormat": "évictions/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Attente avant le premier son (p50 / p95)",
+      "description": "Temps entre le moment où un auditeur s'attache à un direct et celui où il reçoit son premier octet d'audio. C'est ce que la personne vit : pas « l'API a répondu en 3 ms », mais combien de temps elle fixe un lecteur muet. Volontairement séparé de la latence HTTP : une requête d'écoute dure aussi longtemps que la diffusion, sa durée mesure la session, pas l'attente.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(streampulse_listener_time_to_first_chunk_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          }
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(streampulse_listener_time_to_first_chunk_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Directs lancés (par heure)",
+      "description": "Combien de sessions de diffusion ont été ouvertes. La jauge « Flux en direct » ne peut pas répondre à « combien de directs hier ? » : un direct qui commence et se termine entre deux scrapes n'y apparaît jamais.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(streampulse_broadcast_sessions_started_total[1h])",
+          "legendFormat": "directs lancés",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}
