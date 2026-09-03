@@ -135,6 +135,14 @@ class BroadcasterBloc extends Bloc<BroadcasterEvent, BroadcasterState> {
       emit(state.copyWith(errorMessage: 'Crée un direct avant de diffuser.'));
       return;
     }
+    // Bloc processes events concurrently by default, so two taps in the same
+    // frame would run this handler twice: the second one fails and its catch
+    // takes the station off the air that the first just put it on.
+    if (state.starting) return;
+
+    final wasLive = state.isLive;
+    var transportTouched = false;
+
     emit(state.copyWith(starting: true, clearError: true));
 
     try {
@@ -149,6 +157,7 @@ class BroadcasterBloc extends Bloc<BroadcasterEvent, BroadcasterState> {
       // "live" broadcast would be over before anyone tuned in.
       final source = pacedSource(response.stream);
 
+      transportTouched = true;
       if (_transport.isBroadcasting) {
         // Already on air: swap what is being sent through the connection that
         // is already open. Stopping and restarting would flip the stream
@@ -164,9 +173,25 @@ class BroadcasterBloc extends Bloc<BroadcasterEvent, BroadcasterState> {
       }
       emit(state.copyWith(starting: false, isLive: true, broadcastingTrack: event.track));
     } on Object catch (e) {
-      // Leave no half-open broadcast behind if the source failed.
+      if (!transportTouched) {
+        // The failure happened before the transport was asked for anything —
+        // an unreachable track, most often. A broadcast already running is
+        // untouched, and taking the station off the air over a fetch that
+        // failed would be a worse outcome than the error itself.
+        emit(state.copyWith(starting: false, isLive: wasLive, errorMessage: e.toString()));
+        return;
+      }
+      // The transport was asked to change and did not manage it: leave no
+      // half-open broadcast behind, and stop claiming an antenna we no longer
+      // hold — without clearing the track the card reads "Hors ligne" and
+      // "À l'antenne : X" at once.
       await _transport.stop();
-      emit(state.copyWith(starting: false, isLive: false, errorMessage: e.toString()));
+      emit(state.copyWith(
+        starting: false,
+        isLive: false,
+        clearBroadcastingTrack: true,
+        errorMessage: e.toString(),
+      ));
     }
   }
 

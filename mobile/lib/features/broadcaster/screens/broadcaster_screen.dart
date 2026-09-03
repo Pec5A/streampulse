@@ -155,7 +155,12 @@ class _LiveCardState extends State<_LiveCard> {
                   ),
                   icon: const Icon(Icons.stop),
                   label: const Text('Arrêter la diffusion'),
-                  onPressed: () => bloc.add(const BroadcasterStopRequested()),
+                  // Inert while a track change is in flight: the two handlers
+                  // would otherwise race, the stop would be swallowed, and the
+                  // station would stay on air after the user asked to stop.
+                  onPressed: state.starting
+                      ? null
+                      : () => bloc.add(const BroadcasterStopRequested()),
                 ),
               if (state.isLive)
                 Padding(

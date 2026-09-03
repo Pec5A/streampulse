@@ -32,6 +32,9 @@ class FakeBroadcastTransport implements BroadcastTransport {
     required Stream<List<int>> source,
   }) async {
     calls.add('start($publishUrl)');
+    // Strict like HttpBroadcastTransport: a fake that accepts what the real
+    // one refuses lets a broken call path pass its tests.
+    if (_running) throw StateError('a broadcast is already running');
     if (throwOnStart != null) throw throwOnStart!;
     _running = true;
   }
@@ -324,7 +327,7 @@ void main() {
         isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
         isA<BroadcasterState>().having((s) => s.isLive, 'isLive', isTrue),
       ],
-      verify: (_) => expect(transport.calls.take(1), ['switchSource']),
+      verify: (_) => expect(transport.calls, ['switchSource', 'stop']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -464,9 +467,10 @@ void main() {
         broadcastingTrack: track,
       ),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
-      // take(1): close() stops the transport too, so a teardown 'stop'
-      // always trails. What matters is that no 'stop' precedes the switch.
-      verify: (_) => expect(transport.calls.take(1), ['switchSource']),
+      // The full sequence, not a prefix: a prefix would also pass if the
+      // switch had thrown and the catch had stopped the broadcast. The
+      // trailing stop is close()'s teardown.
+      verify: (_) => expect(transport.calls, ['switchSource', 'stop']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -489,10 +493,11 @@ void main() {
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
-      'leaves no half-open broadcast when the new track cannot be fetched',
+      'a track that cannot be fetched does not take the station off air',
+      // The transport was never asked for anything: the running broadcast is
+      // intact, and ending it over a failed download would be a worse outcome
+      // than the error itself.
       setUp: () => transport.simulateRunning(),
-      // The old one is already closed by then, so the state must say so
-      // rather than claim an antenna that is no longer held.
       build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),
       seed: () => const BroadcasterState(
         stream: stream,
@@ -504,9 +509,40 @@ void main() {
       expect: () => [
         isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
         isA<BroadcasterState>()
-            .having((s) => s.isLive, 'isLive', isFalse)
+            .having((s) => s.isLive, 'isLive', isTrue)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', track)
             .having((s) => s.errorMessage, 'errorMessage', contains('404')),
       ],
+      verify: (_) => expect(transport.calls, ['stop']), // close() only
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a failed first broadcast stops claiming an antenna it never held',
+      build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),
+      seed: () => const BroadcasterState(stream: stream, tracks: [track]),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isFalse)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', isNull),
+      ],
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a second tap in the same frame is ignored',
+      // Bloc runs handlers concurrently by default: without the guard the
+      // second run fails and its catch cuts the broadcast the first started.
+      build: build,
+      seed: () => const BroadcasterState(stream: stream, tracks: [track, otherTrack]),
+      act: (bloc) {
+        bloc.add(const BroadcasterGoLiveRequested(track));
+        bloc.add(const BroadcasterGoLiveRequested(otherTrack));
+      },
+      verify: (_) {
+        expect(transport.calls.where((c) => c.startsWith('start')), hasLength(1));
+        expect(transport.calls, isNot(contains('switchSource')));
+      },
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -514,7 +550,7 @@ void main() {
       build: build,
       seed: () => const BroadcasterState(stream: stream, tracks: [track]),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
-      verify: (_) => expect(transport.calls.take(1), ['start(http://api.test/api/v1/streams/s1/publish)']),
+      verify: (_) => expect(transport.calls, ['start(http://api.test/api/v1/streams/s1/publish)', 'stop']),
     );
   });
 }
