@@ -171,9 +171,14 @@ func (h *Hub) Publish(chunk []byte) error {
 		}
 	}
 
-	h.mu.RUnlock()
-
+	// Counted before releasing the read lock, not after: Close takes the
+	// write lock, so it cannot complete until every in-flight Publish has
+	// released its own. That is what makes the counters read at close time
+	// final — an Add landing after the unlock would target a hub already
+	// retired, and those bytes would vanish from the total.
 	h.bytesPublished.Add(int64(len(chunk)))
+
+	h.mu.RUnlock()
 	return nil
 }
 
