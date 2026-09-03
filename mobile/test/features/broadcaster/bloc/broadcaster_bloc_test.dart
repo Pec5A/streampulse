@@ -68,6 +68,17 @@ const track = Track(
   audioUrl: '/api/v1/tracks/t1/audio',
 );
 
+const otherTrack = Track(
+  id: 't2',
+  title: 'Aube',
+  artist: 'KaysZ',
+  contentType: 'audio/mpeg',
+  sizeBytes: 8192,
+  uploaderId: 'u1',
+  uploaderUsername: 'kaysz',
+  audioUrl: '/api/v1/tracks/t2/audio',
+);
+
 const stream = LiveStream(
   id: 's1',
   title: 'Jazz de nuit',
@@ -292,12 +303,17 @@ void main() {
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
-      'does nothing when already live',
+      'restarts the same track rather than refusing, when already live',
+      // Being on air no longer blocks a new broadcast: it is how the track is
+      // changed. Asking for the one already playing simply plays it again.
       build: build,
       seed: () => const BroadcasterState(stream: stream, tracks: [track], isLive: true),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
-      expect: () => <BroadcasterState>[],
-      verify: (_) => expect(transport.calls.where((c) => c.startsWith('start')), isEmpty),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>().having((s) => s.isLive, 'isLive', isTrue),
+      ],
+      verify: (_) => expect(transport.calls.take(2), ['stop', 'start(http://api.test/api/v1/streams/s1/publish)']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -395,11 +411,13 @@ void main() {
   });
 
   group('BroadcasterState', () {
-    test('canGoLive needs a stream, a track and no broadcast in flight', () {
+    test('canGoLive needs a stream and a track, and no start in flight', () {
       expect(const BroadcasterState().canGoLive, isFalse);
       expect(const BroadcasterState(stream: stream).canGoLive, isFalse);
       expect(const BroadcasterState(stream: stream, tracks: [track]).canGoLive, isTrue);
-      expect(const BroadcasterState(stream: stream, tracks: [track], isLive: true).canGoLive, isFalse);
+      // True while live on purpose: a station changes record without going
+      // off the air first.
+      expect(const BroadcasterState(stream: stream, tracks: [track], isLive: true).canGoLive, isTrue);
       expect(const BroadcasterState(stream: stream, tracks: [track], starting: true).canGoLive, isFalse);
     });
 
@@ -418,5 +436,73 @@ void main() {
       expect(cleared.broadcastingTrack, isNull);
       expect(cleared.errorMessage, isNull);
     });
+  });
+
+  group('changing track on air', () {
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'closes the running broadcast before opening the next',
+      // The transport refuses a second broadcast on top of a running one, so
+      // without the stop the switch failed outright.
+      build: build,
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      // take(2): close() stops the transport too, so a teardown 'stop'
+      // always trails the calls made by the switch itself.
+      verify: (_) => expect(transport.calls.take(2), [
+        'stop',
+        'start(http://api.test/api/v1/streams/s1/publish)',
+      ]),
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'stays on air, with the new track',
+      build: build,
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isTrue)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', otherTrack),
+      ],
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'leaves no half-open broadcast when the new track cannot be fetched',
+      // The old one is already closed by then, so the state must say so
+      // rather than claim an antenna that is no longer held.
+      build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isFalse)
+            .having((s) => s.errorMessage, 'errorMessage', contains('404')),
+      ],
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a first broadcast still starts without a stop',
+      build: build,
+      seed: () => const BroadcasterState(stream: stream, tracks: [track]),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
+      verify: (_) => expect(transport.calls.take(1), ['start(http://api.test/api/v1/streams/s1/publish)']),
+    );
   });
 }
