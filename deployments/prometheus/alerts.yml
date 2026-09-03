@@ -63,3 +63,52 @@ groups:
             for 5 minutes — bcrypt cost, DB pool exhaustion, or noisy
             neighbor on the compose host are the usual suspects here.
           runbook_url: "docs/runbooks/alert-auth-high-latency.md"
+
+  - name: streampulse-streaming
+    rules:
+      # Business alert: listeners are being dropped, which the product owner
+      # feels as "the stream cuts out", long before any HTTP metric moves —
+      # an evicted listener's request ends normally, with a 200.
+      # Threshold is a count, not a rate: a single slow listener on a bad
+      # connection is normal, a handful in ten minutes is the hub shedding
+      # an audience it can no longer serve.
+      - alert: StreamPulseListenersFallingBehind
+        expr: sum(increase(streampulse_listener_evictions_total[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          domain: business
+        annotations:
+          summary: "Listeners are being evicted for falling behind"
+          description: >-
+            More than 3 listeners were disconnected in 10 minutes for not
+            keeping up with the broadcast. Either the broadcaster's bitrate
+            outruns what the audience can absorb, or the API host is too
+            loaded to fan chunks out fast enough.
+          runbook_url: "docs/runbooks/alert-listeners-falling-behind.md"
+
+      # Business alert: a stream the product says is "live" while no audio is
+      # moving. Listeners are connected to silence, and nothing else in the
+      # stack reports a problem — the hub is healthy, it just has nothing to
+      # forward.
+      #
+      # `for` is deliberately long. A broadcaster pausing on air keeps the
+      # hub open with zero bytes flowing, and that is a legitimate state:
+      # anything shorter would page someone every time a DJ pauses.
+      - alert: StreamPulseBroadcastSilent
+        expr: |
+          streampulse_active_streams > 0
+          and
+          rate(streampulse_broadcast_bytes_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          domain: business
+        annotations:
+          summary: "A stream is live but no audio is being published"
+          description: >-
+            At least one stream has been marked live for 10 minutes without a
+            single byte published. Usually a broadcaster whose upload died
+            without closing the connection, leaving the hub open and its
+            listeners on silence.
+          runbook_url: "docs/runbooks/alert-broadcast-silent.md"
