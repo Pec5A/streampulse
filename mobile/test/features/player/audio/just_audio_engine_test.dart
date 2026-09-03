@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:streampulse/features/player/audio/audio_engine.dart';
 import 'package:streampulse/features/player/audio/just_audio_engine.dart';
 
 class MockAudioPlayer extends Mock implements AudioPlayer {}
@@ -143,6 +146,84 @@ void main() {
 
     // setSource already opened the new URL; play must not reopen it.
     verifyNeverOpened();
+    verify(player.play).called(1);
+  });
+
+  group('what the OS is told', () {
+    late StreamController<PlayerState> playerStates;
+
+    setUp(() {
+      playerStates = StreamController<PlayerState>.broadcast();
+      when(() => player.playerStateStream).thenAnswer((_) => playerStates.stream);
+    });
+
+    tearDown(() => playerStates.close());
+
+    test('a paused live stream reports paused, not idle', () async {
+      // Releasing the connection puts just_audio in idle, and idle is what
+      // tells audio_service to tear down the foreground service: the
+      // notification and the lock-screen controls would disappear on every
+      // pause. Only the connection is gone; the user is paused.
+      final seen = <PlaybackStatus>[];
+      engine.statusStream.listen(seen.add);
+
+      await engine.setSource(liveUrl, isLive: true);
+      playerStates.add(PlayerState(true, ProcessingState.ready));
+      await Future<void>.delayed(Duration.zero);
+
+      await engine.pause();
+      playerStates.add(PlayerState(false, ProcessingState.idle));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(seen, [PlaybackStatus.playing, PlaybackStatus.paused]);
+    });
+
+    test('resuming reports playing again', () async {
+      final seen = <PlaybackStatus>[];
+      engine.statusStream.listen(seen.add);
+
+      await engine.setSource(liveUrl, isLive: true);
+      await engine.pause();
+      playerStates.add(PlayerState(false, ProcessingState.idle));
+      await Future<void>.delayed(Duration.zero);
+
+      await engine.play();
+      playerStates.add(PlayerState(true, ProcessingState.ready));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(seen, [PlaybackStatus.paused, PlaybackStatus.playing]);
+    });
+
+    test('a real stop reports idle, because it really is idle', () async {
+      final seen = <PlaybackStatus>[];
+      engine.statusStream.listen(seen.add);
+
+      await engine.setSource(liveUrl, isLive: true);
+      await engine.stop();
+      playerStates.add(PlayerState(false, ProcessingState.idle));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(seen, [PlaybackStatus.idle]);
+    });
+  });
+
+  test('a failed reconnection can still be retried', () async {
+    // Clearing the flag before the source is open would strand the player:
+    // every later play would call play() on an idle player and nothing would
+    // ever happen again.
+    await engine.setSource(liveUrl, isLive: true);
+    await engine.pause();
+    clearInteractions(player); // the opening setUrl is not part of what is measured
+
+    when(() => player.setUrl(any(), preload: any(named: 'preload')))
+        .thenThrow(Exception('réseau coupé'));
+    await expectLater(engine.play(), throwsException);
+
+    when(() => player.setUrl(any(), preload: any(named: 'preload')))
+        .thenAnswer((_) async => null);
+    await engine.play();
+
+    verify(() => player.setUrl(liveUrl, preload: false)).called(2);
     verify(player.play).called(1);
   });
 }

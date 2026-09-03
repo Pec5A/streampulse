@@ -29,6 +29,16 @@ class JustAudioEngine implements AudioEngine {
   /// [play] knows it has to reconnect rather than resume.
   bool _released = false;
 
+  /// True while a live stream is paused on purpose.
+  ///
+  /// Releasing the connection puts just_audio in `idle`, and `idle` is what
+  /// tells `audio_service` to tear down the foreground service — the
+  /// notification and the lock-screen controls would vanish on every pause,
+  /// which is precisely what that integration exists to provide. The state the
+  /// user is in is "paused", so that is what gets published; only the
+  /// connection is really gone.
+  bool _pausedLive = false;
+
   /// Configures the OS audio session. Must be awaited once before playing:
   /// without it, Android will not grant audio focus and iOS will not keep
   /// playing when the screen locks.
@@ -77,7 +87,9 @@ class JustAudioEngine implements AudioEngine {
   }
 
   @override
-  Stream<PlaybackStatus> get statusStream => _player.playerStateStream.map(_toStatus).distinct();
+  Stream<PlaybackStatus> get statusStream => _player.playerStateStream
+      .map((state) => _pausedLive ? PlaybackStatus.paused : _toStatus(state))
+      .distinct();
 
   static PlaybackStatus _toStatus(PlayerState state) {
     switch (state.processingState) {
@@ -110,6 +122,7 @@ class JustAudioEngine implements AudioEngine {
     _source = url;
     _isLive = isLive;
     _released = false;
+    _pausedLive = false;
     await _open(url);
   }
 
@@ -130,9 +143,14 @@ class JustAudioEngine implements AudioEngine {
     // Rejoin rather than resume: the connection was released, and there is no
     // position to come back to anyway — the broadcast carried on without us.
     if (_released && _source != null) {
-      _released = false;
+      // Cleared only once the source is really open. Clearing it first would
+      // mean a failed reconnection — the likely outcome right after a pause on
+      // a flaky network — leaves no way to reconnect ever again: the next play
+      // would just call play() on an idle player, forever.
       await _open(_source!);
+      _released = false;
     }
+    _pausedLive = false;
     await _player.play();
   }
 
@@ -150,14 +168,17 @@ class JustAudioEngine implements AudioEngine {
     // Releasing here makes the reconnection ours to perform, not the server's
     // to force.
     _released = true;
+    _pausedLive = true;
     await _player.stop();
   }
 
   @override
   Future<void> stop() async {
     // Same reasoning as [pause] for a live source: what is stopped is gone,
-    // and coming back means opening a new connection.
+    // and coming back means opening a new connection. Unlike a pause, this one
+    // really is a stop, so idle is the honest state to publish.
     _released = _isLive;
+    _pausedLive = false;
     await _player.stop();
   }
 
