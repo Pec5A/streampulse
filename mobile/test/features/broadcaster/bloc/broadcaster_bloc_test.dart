@@ -36,6 +36,16 @@ class FakeBroadcastTransport implements BroadcastTransport {
     _running = true;
   }
 
+  /// Puts the fake in the state a real transport reaches after [start], for
+  /// tests that seed a bloc already on air instead of going live first.
+  void simulateRunning() => _running = true;
+
+  @override
+  Future<void> switchSource(Stream<List<int>> source) async {
+    calls.add('switchSource');
+    if (!_running) throw StateError('no broadcast to switch');
+  }
+
   @override
   Future<void> stop() async {
     calls.add('stop');
@@ -304,8 +314,9 @@ void main() {
 
     blocTest<BroadcasterBloc, BroadcasterState>(
       'restarts the same track rather than refusing, when already live',
+      setUp: () => transport.simulateRunning(),
       // Being on air no longer blocks a new broadcast: it is how the track is
-      // changed. Asking for the one already playing simply plays it again.
+      // changed. Asking for the one already playing restarts it, on air.
       build: build,
       seed: () => const BroadcasterState(stream: stream, tracks: [track], isLive: true),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
@@ -313,7 +324,7 @@ void main() {
         isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
         isA<BroadcasterState>().having((s) => s.isLive, 'isLive', isTrue),
       ],
-      verify: (_) => expect(transport.calls.take(2), ['stop', 'start(http://api.test/api/v1/streams/s1/publish)']),
+      verify: (_) => expect(transport.calls.take(1), ['switchSource']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -440,9 +451,11 @@ void main() {
 
   group('changing track on air', () {
     blocTest<BroadcasterBloc, BroadcasterState>(
-      'closes the running broadcast before opening the next',
-      // The transport refuses a second broadcast on top of a running one, so
-      // without the stop the switch failed outright.
+      'swaps the source without closing the connection',
+      setUp: () => transport.simulateRunning(),
+      // Stopping and restarting would flip the stream offline and end every
+      // listener's response: the audience would be dropped by a change of
+      // record. The open request is reused instead.
       build: build,
       seed: () => const BroadcasterState(
         stream: stream,
@@ -451,16 +464,14 @@ void main() {
         broadcastingTrack: track,
       ),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
-      // take(2): close() stops the transport too, so a teardown 'stop'
-      // always trails the calls made by the switch itself.
-      verify: (_) => expect(transport.calls.take(2), [
-        'stop',
-        'start(http://api.test/api/v1/streams/s1/publish)',
-      ]),
+      // take(1): close() stops the transport too, so a teardown 'stop'
+      // always trails. What matters is that no 'stop' precedes the switch.
+      verify: (_) => expect(transport.calls.take(1), ['switchSource']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
       'stays on air, with the new track',
+      setUp: () => transport.simulateRunning(),
       build: build,
       seed: () => const BroadcasterState(
         stream: stream,
@@ -479,6 +490,7 @@ void main() {
 
     blocTest<BroadcasterBloc, BroadcasterState>(
       'leaves no half-open broadcast when the new track cannot be fetched',
+      setUp: () => transport.simulateRunning(),
       // The old one is already closed by then, so the state must say so
       // rather than claim an antenna that is no longer held.
       build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),

@@ -13,8 +13,12 @@ class _CapturingClient extends http.BaseClient {
   final completer = Completer<void>();
   http.BaseRequest? request;
 
+  /// How many connections were opened. A track change must not add one.
+  int sendCount = 0;
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    sendCount++;
     this.request = request;
     await request.finalize().forEach(chunks.add);
     if (!completer.isCompleted) completer.complete();
@@ -141,10 +145,10 @@ void main() {
         delay: (d) async => waits.add(d),
       ).toList();
 
-      // 24000 B/s: 4096 bytes take 170.67 ms, not the 250 ms the old fixed
-      // 16 KiB/s imposed.
+      // 24000 B/s plus the 8% headroom: 4096 bytes take 158 ms, against the
+      // 250 ms the old fixed 16 KiB/s imposed.
       expect(waits, isNotEmpty);
-      expect(waits.first, const Duration(microseconds: 170667));
+      expect(waits.first, const Duration(microseconds: 158025));
     });
 
     test('falls back to 16 KiB/s when the bytes name no rate', () async {
@@ -244,6 +248,44 @@ void main() {
 
       await transport.stop();
       await controller.close();
+    });
+
+    test('switching source reuses the open connection', () async {
+      // Closing the publish request flips the stream offline and ends every
+      // listener's response: changing record would disconnect the audience.
+      final client = _CapturingClient();
+      final transport = HttpBroadcastTransport(client: client);
+      final first = StreamController<List<int>>();
+      final second = StreamController<List<int>>();
+
+      await transport.start(
+        publishUrl: 'http://api.test/api/v1/streams/s1/publish',
+        token: 'jwt-token',
+        source: first.stream,
+      );
+      first.add([1, 2, 3]);
+      await Future<void>.delayed(Duration.zero);
+
+      await transport.switchSource(second.stream);
+      // The abandoned source must go silent rather than interleave with the
+      // new one.
+      first.add([9, 9]);
+      second.add([4, 5, 6]);
+      await Future<void>.delayed(Duration.zero);
+      await second.close();
+      await client.completer.future;
+
+      expect(client.sendCount, 1);
+      expect(client.body, [1, 2, 3, 4, 5, 6]);
+      await first.close();
+    });
+
+    test('switching with nothing on air is refused', () async {
+      final transport = HttpBroadcastTransport(client: _CapturingClient());
+      expect(
+        () => transport.switchSource(const Stream<List<int>>.empty()),
+        throwsStateError,
+      );
     });
 
     test('stop on an idle transport is a no-op', () async {

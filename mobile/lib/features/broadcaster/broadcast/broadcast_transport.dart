@@ -20,6 +20,14 @@ abstract class BroadcastTransport {
     required Stream<List<int>> source,
   });
 
+  /// Swaps the bytes being broadcast without closing the connection.
+  ///
+  /// Changing record must not take the station off the air: closing the publish
+  /// request flips the stream offline and ends every listener's response, so a
+  /// track change done by stop-then-start disconnects the audience. Feeding a
+  /// new source into the same open request changes only what they hear.
+  Future<void> switchSource(Stream<List<int>> source);
+
   /// Ends the broadcast. The server flips the stream back to offline as soon
   /// as the request body closes.
   Future<void> stop();
@@ -58,7 +66,23 @@ class HttpBroadcastTransport implements BroadcastTransport {
 
     _request = request;
     _response = _client.send(request);
+    _pump(request, source);
+  }
 
+  @override
+  Future<void> switchSource(Stream<List<int>> source) async {
+    final request = _request;
+    if (request == null) {
+      throw StateError('no broadcast to switch');
+    }
+    // Cancelling rather than letting the old source finish: its onDone would
+    // close the sink, which is exactly the disconnection this avoids.
+    await _subscription?.cancel();
+    _pump(request, source);
+  }
+
+  /// Feeds [source] into the open request until it ends or is replaced.
+  void _pump(http.StreamedRequest request, Stream<List<int>> source) {
     _subscription = source.listen(
       request.sink.add,
       onDone: () => request.sink.close(),
@@ -103,6 +127,15 @@ const int fallbackBytesPerSecond = 16 * 1024;
 /// all the same: a source that is not audio must not grow this forever.
 const int _sniffLimit = 512 * 1024;
 
+/// How far ahead of real time the audio is sent.
+///
+/// Feeding a listener at exactly playback speed leaves their buffer no way to
+/// recover: it never grows, so the first network hiccup becomes a stall that
+/// lasts the rest of the broadcast. A little margin lets the buffer refill
+/// after a hiccup instead of draining for good. Small on purpose — the more
+/// margin, the further ahead of the music the broadcast finishes.
+const double pacingHeadroom = 1.08;
+
 /// Emits [source] at the rate the audio is meant to be played, in [chunkSize]
 /// pieces.
 ///
@@ -136,7 +169,7 @@ Stream<List<int>> pacedSource(
       head.addAll(bytes);
       final detected = mpegBytesPerSecond(head);
       if (detected != null) {
-        rate = detected;
+        rate = (detected * pacingHeadroom).round();
         sniffing = false;
       } else if (head.length >= _sniffLimit) {
         // Not audio we can read. The fallback stands rather than stalling a

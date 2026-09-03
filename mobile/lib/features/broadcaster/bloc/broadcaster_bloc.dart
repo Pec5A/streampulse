@@ -137,13 +137,6 @@ class BroadcasterBloc extends Bloc<BroadcasterEvent, BroadcasterState> {
     }
     emit(state.copyWith(starting: true, clearError: true));
 
-    // Changing track without going off air. The transport refuses a second
-    // broadcast on top of a running one, so the current one is closed first;
-    // the stream goes offline for the moment it takes to open the next, which
-    // is what changing record looks like from the outside.
-    if (state.isLive) {
-      await _transport.stop();
-    }
     try {
       final response = await _audioClient.send(
         http.Request('GET', Uri.parse(_repository.trackAudioUrl(event.track))),
@@ -152,13 +145,23 @@ class BroadcasterBloc extends Bloc<BroadcasterEvent, BroadcasterState> {
         throw StateError('audio introuvable (${response.statusCode})');
       }
 
-      await _transport.start(
-        publishUrl: _repository.publishUrl(stream.id),
-        token: _token,
-        // Paced, otherwise the whole file would be pushed in seconds and the
-        // "live" broadcast would be over before anyone tuned in.
-        source: pacedSource(response.stream),
-      );
+      // Paced, otherwise the whole file would be pushed in seconds and the
+      // "live" broadcast would be over before anyone tuned in.
+      final source = pacedSource(response.stream);
+
+      if (_transport.isBroadcasting) {
+        // Already on air: swap what is being sent through the connection that
+        // is already open. Stopping and restarting would flip the stream
+        // offline and end every listener's response — the audience would be
+        // disconnected by a change of record.
+        await _transport.switchSource(source);
+      } else {
+        await _transport.start(
+          publishUrl: _repository.publishUrl(stream.id),
+          token: _token,
+          source: source,
+        );
+      }
       emit(state.copyWith(starting: false, isLive: true, broadcastingTrack: event.track));
     } on Object catch (e) {
       // Leave no half-open broadcast behind if the source failed.
