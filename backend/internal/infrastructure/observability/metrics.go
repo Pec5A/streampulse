@@ -48,3 +48,18 @@ var (
 		[]string{"method", "path"},
 	)
 )
+
+// Prometheus counter vectors only expose a label combination once it has been
+// incremented, so a freshly started process publishes none of these: the
+// dashboard panel reads "No data" until the first login, and a ratio alert
+// has nothing to evaluate. Declaring the outcomes up front makes them exist
+// at zero from the first scrape, which is also the only way a *drop* to zero
+// is distinguishable from a process that has simply never seen traffic.
+func init() {
+	for _, result := range []string{"success", "invalid_credentials", "error"} {
+		AuthLoginsTotal.WithLabelValues(result)
+	}
+	for _, result := range []string{"success", "conflict", "error"} {
+		AuthRegistrationsTotal.WithLabelValues(result)
+	}
+}
