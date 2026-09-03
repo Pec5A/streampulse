@@ -41,7 +41,9 @@ class _LiveStreamsView extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Rafraîchir',
-            onPressed: () => context.read<StreamsBloc>().add(const StreamsRequested()),
+            // Silent: the list is already on screen, so it is updated in
+            // place rather than replaced by a spinner.
+            onPressed: () => context.read<StreamsBloc>().add(const StreamsRefreshRequested()),
           ),
         ],
       ),
@@ -55,7 +57,7 @@ class _LiveStreamsView extends StatelessWidget {
               ),
             StreamsLoaded(:final streams) when streams.isEmpty => const _EmptyView(),
             StreamsLoaded(:final streams) => RefreshIndicator(
-                onRefresh: () async => context.read<StreamsBloc>().add(const StreamsRequested()),
+                onRefresh: () async => context.read<StreamsBloc>().add(const StreamsRefreshRequested()),
                 child: ListView.separated(
                   itemCount: streams.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
