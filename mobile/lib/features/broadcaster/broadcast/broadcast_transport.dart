@@ -75,20 +75,46 @@ class HttpBroadcastTransport implements BroadcastTransport {
     if (request == null) {
       throw StateError('no broadcast to switch');
     }
-    // Cancelling rather than letting the old source finish: its onDone would
-    // close the sink, which is exactly the disconnection this avoids.
-    await _subscription?.cancel();
+    _retire(_subscription);
     _pump(request, source);
   }
 
   /// Feeds [source] into the open request until it ends or is replaced.
+  ///
+  /// Only the current subscription may write. A retired one is cancelled but
+  /// its cancellation is not waited on, so it can still be delivering when the
+  /// next source starts; without this check the two would interleave in the
+  /// listeners' audio, and a late chunk could hit a sink already closed.
   void _pump(http.StreamedRequest request, Stream<List<int>> source) {
-    _subscription = source.listen(
-      request.sink.add,
-      onDone: () => request.sink.close(),
-      onError: (Object _) => request.sink.close(),
+    late final StreamSubscription<List<int>> sub;
+    sub = source.listen(
+      (bytes) {
+        if (identical(_subscription, sub)) request.sink.add(bytes);
+      },
+      onDone: () {
+        if (identical(_subscription, sub)) request.sink.close();
+      },
+      onError: (Object _) {
+        if (identical(_subscription, sub)) request.sink.close();
+      },
       cancelOnError: true,
     );
+    _subscription = sub;
+  }
+
+  /// Detaches a subscription and asks it to cancel, without waiting for it.
+  ///
+  /// Waiting is what made this dangerous: cancelling a paced source parked on
+  /// its own input does not complete until that input produces or closes, so a
+  /// stalled download would freeze a track change — or a stop — for as long as
+  /// the stall lasted. Detaching first is what makes not waiting safe: the
+  /// identity check in [_pump] means a retired subscription can no longer
+  /// write, whether it has finished cancelling or not. The underlying
+  /// connection is released as soon as the cancellation lands.
+  void _retire(StreamSubscription<List<int>>? sub) {
+    if (sub == null) return;
+    if (identical(_subscription, sub)) _subscription = null;
+    unawaited(sub.cancel());
   }
 
   @override
@@ -103,7 +129,7 @@ class HttpBroadcastTransport implements BroadcastTransport {
 
     if (subscription == null || request == null) return;
 
-    await subscription.cancel();
+    _retire(subscription);
     // Closing the sink is what tells the server the broadcast is over.
     await request.sink.close();
     // Drain the response so the connection is released rather than leaked.
@@ -127,14 +153,22 @@ const int fallbackBytesPerSecond = 16 * 1024;
 /// all the same: a source that is not audio must not grow this forever.
 const int _sniffLimit = 512 * 1024;
 
-/// How far ahead of real time the audio is sent.
+/// How much faster than real time the audio is sent while building a buffer.
 ///
 /// Feeding a listener at exactly playback speed leaves their buffer no way to
 /// recover: it never grows, so the first network hiccup becomes a stall that
-/// lasts the rest of the broadcast. A little margin lets the buffer refill
-/// after a hiccup instead of draining for good. Small on purpose — the more
-/// margin, the further ahead of the music the broadcast finishes.
+/// lasts the rest of the broadcast. A margin lets it refill instead.
 const double pacingHeadroom = 1.08;
+
+/// How much buffer the margin is allowed to build, in seconds of audio.
+///
+/// The margin stops once this much is banked, and pacing returns to exactly
+/// real time. Without a ceiling the lead accumulates for as long as the
+/// connection stays open — and it now stays open across track changes — so an
+/// hour-long set would run minutes ahead of its own music and leave listeners
+/// that far behind the broadcaster. Ten seconds is enough to ride out a
+/// hiccup and small enough to stay honest about being live.
+const double maxLeadSeconds = 10;
 
 /// Emits [source] at the rate the audio is meant to be played, in [chunkSize]
 /// pieces.
@@ -159,6 +193,10 @@ Stream<List<int>> pacedSource(
 }) async* {
   var rate = bytesPerSecond ?? fallbackBytesPerSecond;
   var sniffing = bytesPerSecond == null;
+  // An explicit rate is taken literally: the caller asked for that speed, not
+  // for a buffering strategy.
+  final building = bytesPerSecond == null;
+  var leadSeconds = 0.0;
   final head = <int>[];
   final buffer = <int>[];
 
@@ -169,7 +207,7 @@ Stream<List<int>> pacedSource(
       head.addAll(bytes);
       final detected = mpegBytesPerSecond(head);
       if (detected != null) {
-        rate = (detected * pacingHeadroom).round();
+        rate = detected;
         sniffing = false;
       } else if (head.length >= _sniffLimit) {
         // Not audio we can read. The fallback stands rather than stalling a
@@ -182,9 +220,14 @@ Stream<List<int>> pacedSource(
     while (buffer.length >= chunkSize) {
       yield buffer.sublist(0, chunkSize);
       buffer.removeRange(0, chunkSize);
+
       // Recomputed per chunk: detection can land after the first bytes are
-      // already on their way.
-      await delay(Duration(microseconds: (chunkSize * 1000000 / rate).round()));
+      // already on their way, and the margin stops once the buffer is banked.
+      final realTime = chunkSize / rate;
+      final ahead = building && leadSeconds < maxLeadSeconds;
+      final interval = ahead ? realTime / pacingHeadroom : realTime;
+      leadSeconds += realTime - interval;
+      await delay(Duration(microseconds: (interval * 1000000).round()));
     }
   }
   if (buffer.isNotEmpty) {
