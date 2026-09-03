@@ -34,7 +34,10 @@ class BroadcasterState extends Equatable {
   final String? errorMessage;
 
   bool get hasStream => stream != null;
-  bool get canGoLive => hasStream && !isLive && !starting && tracks.isNotEmpty;
+  /// Whether a track can be put on air. Deliberately true while already
+  /// broadcasting: a station changes record without going off the air, and
+  /// forcing a stop first is the reason switching track felt impossible.
+  bool get canGoLive => hasStream && !starting && tracks.isNotEmpty;
 
   BroadcasterState copyWith({
     List<Track>? tracks,

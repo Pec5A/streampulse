@@ -156,6 +156,14 @@ class _LiveCardState extends State<_LiveCard> {
                   icon: const Icon(Icons.stop),
                   label: const Text('Arrêter la diffusion'),
                   onPressed: () => bloc.add(const BroadcasterStopRequested()),
+                ),
+              if (state.isLive)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Choisis une autre piste ci-dessous pour changer à l\'antenne.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 )
               else
                 Text(
@@ -262,8 +270,12 @@ class _TrackTile extends StatelessWidget {
         children: [
           IconButton(
             icon: const Icon(Icons.podcasts),
-            tooltip: 'Diffuser cette piste',
-            onPressed: state.canGoLive ? () => bloc.add(BroadcasterGoLiveRequested(track)) : null,
+            tooltip: onAir ? 'Déjà à l\'antenne' : 'Diffuser cette piste',
+            // Offered while live so the track can be changed on air, except
+            // for the one already playing.
+            onPressed: state.canGoLive && !onAir
+                ? () => bloc.add(BroadcasterGoLiveRequested(track))
+                : null,
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
