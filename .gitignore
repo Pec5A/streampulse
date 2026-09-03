@@ -38,3 +38,6 @@ mobile/coverage/
 
 # Uploaded audio files (ticket K2) — runtime data, never committed.
 backend/uploads/
+
+# Jeton de scrape production — jamais commite.
+deployments/prometheus/prod-token
