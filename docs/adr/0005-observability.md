@@ -31,6 +31,11 @@ La décision ci-dessus n'a longtemps couvert que l'authentification. Le direct �
 | `streampulse_listener_chunks_dropped_total` | compteur | Auditeurs qui décrochent (signal avancé) |
 | `streampulse_listener_evictions_total` | compteur | Auditeurs perdus pour cause de retard |
 
+Deux KPI ajoutés dans un second temps, parce que les cinq premiers ne répondaient pas à deux questions que le produit pose :
+
+- `streampulse_broadcast_sessions_started_total` — « combien de directs hier ? ». Une jauge ne peut structurellement pas y répondre : un direct qui commence et se termine entre deux scrapes n'apparaît jamais dans `active_streams`. Compté dans le registre et lu au scrape, comme les autres.
+- `streampulse_listener_time_to_first_chunk_seconds` — l'attente entre le moment où un auditeur s'attache et celui où il entend quelque chose. C'est la qualité vécue, et c'est le seul des sept qui ne peut pas être lu au scrape : il s'observe à l'événement, dans le handler d'écoute. Il ne se déduit surtout pas de l'histogramme HTTP, dont la durée pour une requête d'écoute est celle de la diffusion. C'est aussi le KPI qui manquait pour prouver que le correctif de latence de la PR #37 tient dans le temps.
+
 Trois choix structurent leur implémentation :
 
 **Lecture au scrape, pas de compteur maintenu à la main.** Une jauge incrémentée à l'abonnement devrait être décrémentée sur les quatre façons de partir : désabonnement, éviction, fermeture du hub, arrêt du process. En rater une, c'est une jauge qui dérive en silence pour toute la vie du process. Le collecteur interroge le registre au moment du scrape (`Registry.Totals()`) : lire l'état vivant ne peut pas dériver. Bonus, `Hub.Publish` — le chemin chaud, une fois par chunk — n'est pas touché.

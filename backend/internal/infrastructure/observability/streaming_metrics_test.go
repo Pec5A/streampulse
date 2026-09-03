@@ -17,6 +17,7 @@ func TestStreamingCollector_ReportsEveryValue(t *testing.T) {
 			ActiveListeners: 47,
 			BytesPublished:  1024,
 			ChunksDropped:   5,
+			SessionsStarted: 9,
 			Evictions:       1,
 		}
 	})
@@ -28,6 +29,9 @@ streampulse_active_listeners 47
 # HELP streampulse_active_streams Streams currently broadcasting (business metric)
 # TYPE streampulse_active_streams gauge
 streampulse_active_streams 3
+# HELP streampulse_broadcast_sessions_started_total Total live broadcast sessions opened since process start (business metric)
+# TYPE streampulse_broadcast_sessions_started_total counter
+streampulse_broadcast_sessions_started_total 9
 # HELP streampulse_broadcast_bytes_total Total audio bytes ingested from broadcasters since process start, counted once per chunk regardless of how many listeners received it (business metric)
 # TYPE streampulse_broadcast_bytes_total counter
 streampulse_broadcast_bytes_total 1024
@@ -52,8 +56,8 @@ func TestStreamingCollector_ReadsOnEveryScrape(t *testing.T) {
 		return observability.StreamingTotals{ActiveStreams: streams}
 	})
 
-	if got := testutil.CollectAndCount(c); got != 5 {
-		t.Fatalf("metric count = %d, want 5", got)
+	if got := testutil.CollectAndCount(c); got != 6 {
+		t.Fatalf("metric count = %d, want 6", got)
 	}
 	if got := testutil.ToFloat64(gaugeOnly(t, c, "streampulse_active_streams")); got != 1 {
 		t.Fatalf("first scrape = %v, want 1", got)
@@ -78,8 +82,8 @@ func TestStreamingCollector_RegistersWithoutConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Gather() = %v", err)
 	}
-	if len(families) != 5 {
-		t.Fatalf("gathered %d families, want 5", len(families))
+	if len(families) != 6 {
+		t.Fatalf("gathered %d families, want 6", len(families))
 	}
 }
 

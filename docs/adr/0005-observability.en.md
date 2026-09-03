@@ -31,6 +31,11 @@ The decision above only ever covered authentication. Live broadcasting — the h
 | `streampulse_listener_chunks_dropped_total` | counter | Listeners starting to fall behind (leading signal) |
 | `streampulse_listener_evictions_total` | counter | Listeners lost for falling too far behind |
 
+Two KPIs were added in a second pass, because the first five did not answer two questions the product asks:
+
+- `streampulse_broadcast_sessions_started_total` — "how many lives happened yesterday?". A gauge structurally cannot answer it: a broadcast that starts and ends between two scrapes never appears in `active_streams`. Counted in the registry and read at scrape time, like the others.
+- `streampulse_listener_time_to_first_chunk_seconds` — the wait between a listener attaching and hearing something. That is experienced quality, and it is the only one of the seven that cannot be read at scrape time: it is observed at the event, in the listen handler. It is emphatically not derivable from the HTTP histogram, whose duration for a listen request is the length of the broadcast. It is also the KPI that was missing to prove PR #37's latency fix holds over time.
+
 Three choices shape the implementation:
 
 **Read at scrape time, no hand-maintained counter.** A gauge incremented on subscribe would have to be decremented on all four ways of leaving: unsubscribe, eviction, hub close, process shutdown. Missing one means a gauge that drifts silently for the life of the process. The collector queries the registry at scrape time (`Registry.Totals()`): reading live state cannot drift. As a bonus, `Hub.Publish` — the hot path, once per chunk — is never touched.

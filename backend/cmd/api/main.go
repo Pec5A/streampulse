@@ -116,6 +116,7 @@ func run() error {
 		return observability.StreamingTotals{
 			ActiveStreams:   t.ActiveStreams,
 			ActiveListeners: t.ActiveListeners,
+			SessionsStarted: t.SessionsStarted,
 			BytesPublished:  t.BytesPublished,
 			ChunksDropped:   t.ChunksDropped,
 			Evictions:       t.Evictions,

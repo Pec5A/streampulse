@@ -19,6 +19,7 @@ import (
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
 	"github.com/streampulse/backend/internal/domain/repository"
+	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/middleware"
 )
@@ -386,6 +387,12 @@ func (h *StreamHandler) Listen(w http.ResponseWriter, r *http.Request) {
 	}
 	defer unsubscribe()
 
+	// Started here rather than at the top of the handler: the lookup and the
+	// error paths above are not part of what a listener waits for. The clock
+	// runs from "attached, waiting for audio" to "audio arrived".
+	attachedAt := time.Now()
+	heardSomething := false
+
 	w.Header().Set("Content-Type", "audio/mpeg")
 	w.Header().Set("Cache-Control", "no-store")
 	// Tells nginx-style proxies not to buffer the response; without it a
@@ -405,6 +412,10 @@ func (h *StreamHandler) Listen(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			flush(w)
+			if !heardSomething {
+				heardSomething = true
+				observability.ListenerTimeToFirstChunk.Observe(time.Since(attachedAt).Seconds())
+			}
 		case <-r.Context().Done():
 			return
 		case <-hub.Done():

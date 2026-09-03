@@ -17,7 +17,7 @@ Le statut est relatif à `main` ; les fonctionnalités encore en PR ouverte sont
 - **Playlists** — CRUD + réordonnancement transactionnel des pistes, + cache offline. *En review (PR #16, #19).*
 - **RGPD** — export des données personnelles & suppression de compte. *En review (PR #14).*
 - **Streaming live & upload audio** — la fonctionnalité phare de la plateforme. *En cours dans des PR ouvertes (#22, #23) ; pas encore sur `main`.*
-- **Observabilité** — métriques Prometheus (métier / technique) + dashboard Grafana, traces distribuées OpenTelemetry et logs JSON corrélés. *En review (PR #14, #27).*
+- **Observabilité** — métriques Prometheus métier et techniques, deux dashboards Grafana (authentification, direct), 5 alertes avec runbooks, traces distribuées OpenTelemetry et logs JSON corrélés.
 
 ## Observabilité
 

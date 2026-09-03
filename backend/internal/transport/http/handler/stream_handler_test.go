@@ -11,11 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	clientmodel "github.com/prometheus/client_model/go"
 	"github.com/streampulse/backend/internal/application/dto"
 	"github.com/streampulse/backend/internal/application/usecase"
 	"github.com/streampulse/backend/internal/domain/entity"
 	"github.com/streampulse/backend/internal/domain/repository"
 	"github.com/streampulse/backend/internal/infrastructure/auth"
+	"github.com/streampulse/backend/internal/infrastructure/observability"
 	"github.com/streampulse/backend/internal/infrastructure/streaming"
 	"github.com/streampulse/backend/internal/transport/http/middleware"
 )
@@ -438,4 +441,56 @@ func TestStreamHandler_PublishMarksTheStreamOfflineWhenItEnds(t *testing.T) {
 	if stored.Status != entity.StreamStatusOffline {
 		t.Errorf("status = %q, want offline once publishing ended", stored.Status)
 	}
+}
+
+// The wait before a listener hears anything is the quality metric the product
+// is judged on, and it is not derivable from the HTTP duration histogram: a
+// listen request lasts as long as the broadcast, so its duration measures the
+// session, not the wait.
+func TestStreamHandler_ListenRecordsTimeToFirstChunk(t *testing.T) {
+	rig := newStreamTestRig(t)
+	s := rig.seed(t, "user-1", "Jazz")
+
+	hub := rig.registry.Open(context.Background(), s.ID)
+
+	before := histogramCount(t, observability.ListenerTimeToFirstChunk)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/streams/"+s.ID+"/listen", nil)
+		ctx, cancel := context.WithTimeout(req.Context(), 3*time.Second)
+		defer cancel()
+		rig.mux.ServeHTTP(httptest.NewRecorder(), req.WithContext(ctx))
+	}()
+
+	// The listener attaches on its own goroutine, so publish until the
+	// observation lands rather than guessing at a sleep.
+	deadline := time.After(3 * time.Second)
+	for histogramCount(t, observability.ListenerTimeToFirstChunk) == before {
+		select {
+		case <-deadline:
+			t.Fatal("no observation recorded — the listener never received a chunk")
+		default:
+		}
+		_ = hub.Publish([]byte("audio"))
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	rig.registry.Close(s.ID)
+	<-done
+
+	if got := histogramCount(t, observability.ListenerTimeToFirstChunk); got != before+1 {
+		t.Errorf("observations = %d, want %d — exactly one per listener, not one per chunk", got, before+1)
+	}
+}
+
+// histogramCount reads how many samples a histogram has observed so far.
+func histogramCount(t *testing.T, h prometheus.Histogram) uint64 {
+	t.Helper()
+	var m clientmodel.Metric
+	if err := h.Write(&m); err != nil {
+		t.Fatalf("Write() = %v", err)
+	}
+	return m.GetHistogram().GetSampleCount()
 }

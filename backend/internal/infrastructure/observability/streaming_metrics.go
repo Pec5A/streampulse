@@ -14,11 +14,18 @@ type StreamingTotals struct {
 	// ActiveListeners is the total number of attached listeners across every
 	// live stream.
 	ActiveListeners int
-	// BytesPublished, ChunksDropped and Evictions are process-wide and
-	// monotonic: they include streams that have already ended.
-	BytesPublished int64
-	ChunksDropped  int64
-	Evictions      int64
+	// SessionsStarted, BytesPublished, ChunksDropped and Evictions are
+	// process-wide and monotonic: they include streams that have already
+	// ended.
+	//
+	// SessionsStarted is what a gauge structurally cannot answer: a broadcast
+	// that starts and ends between two scrapes never appears in
+	// ActiveStreams, so "how many lives happened yesterday" needs its own
+	// counter.
+	SessionsStarted int64
+	BytesPublished  int64
+	ChunksDropped   int64
+	Evictions       int64
 }
 
 // StreamingCollector reports live broadcasting state to Prometheus.
@@ -45,6 +52,7 @@ type StreamingCollector struct {
 
 	activeStreams   *prometheus.Desc
 	activeListeners *prometheus.Desc
+	sessionsTotal   *prometheus.Desc
 	bytesTotal      *prometheus.Desc
 	dropsTotal      *prometheus.Desc
 	evictionsTotal  *prometheus.Desc
@@ -65,6 +73,11 @@ func NewStreamingCollector(read func() StreamingTotals) *StreamingCollector {
 		activeListeners: prometheus.NewDesc(
 			"streampulse_active_listeners",
 			"Listeners currently attached across all live streams (business metric)",
+			nil, nil,
+		),
+		sessionsTotal: prometheus.NewDesc(
+			"streampulse_broadcast_sessions_started_total",
+			"Total live broadcast sessions opened since process start (business metric)",
 			nil, nil,
 		),
 		bytesTotal: prometheus.NewDesc(
@@ -89,6 +102,7 @@ func NewStreamingCollector(read func() StreamingTotals) *StreamingCollector {
 func (c *StreamingCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.activeStreams
 	ch <- c.activeListeners
+	ch <- c.sessionsTotal
 	ch <- c.bytesTotal
 	ch <- c.dropsTotal
 	ch <- c.evictionsTotal
@@ -100,6 +114,7 @@ func (c *StreamingCollector) Collect(ch chan<- prometheus.Metric) {
 
 	ch <- prometheus.MustNewConstMetric(c.activeStreams, prometheus.GaugeValue, float64(t.ActiveStreams))
 	ch <- prometheus.MustNewConstMetric(c.activeListeners, prometheus.GaugeValue, float64(t.ActiveListeners))
+	ch <- prometheus.MustNewConstMetric(c.sessionsTotal, prometheus.CounterValue, float64(t.SessionsStarted))
 	ch <- prometheus.MustNewConstMetric(c.bytesTotal, prometheus.CounterValue, float64(t.BytesPublished))
 	ch <- prometheus.MustNewConstMetric(c.dropsTotal, prometheus.CounterValue, float64(t.ChunksDropped))
 	ch <- prometheus.MustNewConstMetric(c.evictionsTotal, prometheus.CounterValue, float64(t.Evictions))

@@ -240,3 +240,43 @@ func TestTotals_BytesNeverGoBackwardsWhileStreamsClose(t *testing.T) {
 		t.Fatalf("final BytesPublished = %d, want %d", got, published)
 	}
 }
+
+// A broadcast that starts and ends between two scrapes never shows up in the
+// ActiveStreams gauge. Without this counter, "how many lives happened
+// yesterday" is unanswerable — which is the question a product owner asks
+// first.
+func TestTotals_SessionsStartedSurviveTheStreamsThatEnded(t *testing.T) {
+	r := NewRegistry()
+	ctx := context.Background()
+
+	for _, id := range []string{"a", "b", "c"} {
+		r.Open(ctx, id)
+		r.Close(id)
+	}
+
+	got := r.Totals()
+	if got.ActiveStreams != 0 {
+		t.Errorf("ActiveStreams = %d, want 0 — nothing is live any more", got.ActiveStreams)
+	}
+	if got.SessionsStarted != 3 {
+		t.Errorf("SessionsStarted = %d, want 3", got.SessionsStarted)
+	}
+}
+
+// A broadcaster reconnecting reopens the same stream id. That is a new
+// session: the counter has to move, otherwise a flapping broadcaster looks
+// like one uninterrupted live.
+func TestTotals_ReopeningAStreamCountsANewSession(t *testing.T) {
+	r := NewRegistry()
+	ctx := context.Background()
+
+	r.Open(ctx, "s")
+	r.Open(ctx, "s")
+
+	if got := r.Totals().SessionsStarted; got != 2 {
+		t.Errorf("SessionsStarted = %d, want 2", got)
+	}
+	if got := r.Totals().ActiveStreams; got != 1 {
+		t.Errorf("ActiveStreams = %d, want 1 — the reconnect replaced the hub", got)
+	}
+}

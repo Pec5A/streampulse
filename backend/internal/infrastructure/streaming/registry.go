@@ -28,6 +28,13 @@ type Registry struct {
 	retiredBytes     int64
 	retiredDropped   int64
 	retiredEvictions int64
+
+	// Every live session ever opened, including the ones already finished.
+	// The gauge above answers "how many streams right now"; this answers
+	// "how many broadcasts happened yesterday", which no gauge can — a
+	// broadcast that started and ended between two scrapes leaves no trace
+	// in a gauge at all.
+	sessionsStarted int64
 }
 
 // Totals is a process-wide view of broadcasting activity: live gauges plus
@@ -35,6 +42,7 @@ type Registry struct {
 type Totals struct {
 	ActiveStreams   int
 	ActiveListeners int
+	SessionsStarted int64
 	BytesPublished  int64
 	ChunksDropped   int64
 	Evictions       int64
@@ -61,6 +69,7 @@ func (r *Registry) Open(ctx context.Context, streamID string) *Hub {
 	}
 	h := NewHub(ctx, streamID)
 	r.hubs[streamID] = h
+	r.sessionsStarted++
 	return h
 }
 
@@ -108,10 +117,11 @@ func (r *Registry) Totals() Totals {
 	defer r.mu.RUnlock()
 
 	t := Totals{
-		ActiveStreams:  len(r.hubs),
-		BytesPublished: r.retiredBytes,
-		ChunksDropped:  r.retiredDropped,
-		Evictions:      r.retiredEvictions,
+		ActiveStreams:   len(r.hubs),
+		SessionsStarted: r.sessionsStarted,
+		BytesPublished:  r.retiredBytes,
+		ChunksDropped:   r.retiredDropped,
+		Evictions:       r.retiredEvictions,
 	}
 	for _, h := range r.hubs {
 		s := h.Stats()
