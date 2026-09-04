@@ -32,8 +32,21 @@ class FakeBroadcastTransport implements BroadcastTransport {
     required Stream<List<int>> source,
   }) async {
     calls.add('start($publishUrl)');
+    // Strict like HttpBroadcastTransport: a fake that accepts what the real
+    // one refuses lets a broken call path pass its tests.
+    if (_running) throw StateError('a broadcast is already running');
     if (throwOnStart != null) throw throwOnStart!;
     _running = true;
+  }
+
+  /// Puts the fake in the state a real transport reaches after [start], for
+  /// tests that seed a bloc already on air instead of going live first.
+  void simulateRunning() => _running = true;
+
+  @override
+  Future<void> switchSource(Stream<List<int>> source) async {
+    calls.add('switchSource');
+    if (!_running) throw StateError('no broadcast to switch');
   }
 
   @override
@@ -66,6 +79,17 @@ const track = Track(
   uploaderId: 'u1',
   uploaderUsername: 'kaysz',
   audioUrl: '/api/v1/tracks/t1/audio',
+);
+
+const otherTrack = Track(
+  id: 't2',
+  title: 'Aube',
+  artist: 'KaysZ',
+  contentType: 'audio/mpeg',
+  sizeBytes: 8192,
+  uploaderId: 'u1',
+  uploaderUsername: 'kaysz',
+  audioUrl: '/api/v1/tracks/t2/audio',
 );
 
 const stream = LiveStream(
@@ -292,12 +316,18 @@ void main() {
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
-      'does nothing when already live',
+      'restarts the same track rather than refusing, when already live',
+      setUp: () => transport.simulateRunning(),
+      // Being on air no longer blocks a new broadcast: it is how the track is
+      // changed. Asking for the one already playing restarts it, on air.
       build: build,
       seed: () => const BroadcasterState(stream: stream, tracks: [track], isLive: true),
       act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
-      expect: () => <BroadcasterState>[],
-      verify: (_) => expect(transport.calls.where((c) => c.startsWith('start')), isEmpty),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>().having((s) => s.isLive, 'isLive', isTrue),
+      ],
+      verify: (_) => expect(transport.calls, ['switchSource', 'stop']),
     );
 
     blocTest<BroadcasterBloc, BroadcasterState>(
@@ -395,11 +425,13 @@ void main() {
   });
 
   group('BroadcasterState', () {
-    test('canGoLive needs a stream, a track and no broadcast in flight', () {
+    test('canGoLive needs a stream and a track, and no start in flight', () {
       expect(const BroadcasterState().canGoLive, isFalse);
       expect(const BroadcasterState(stream: stream).canGoLive, isFalse);
       expect(const BroadcasterState(stream: stream, tracks: [track]).canGoLive, isTrue);
-      expect(const BroadcasterState(stream: stream, tracks: [track], isLive: true).canGoLive, isFalse);
+      // True while live on purpose: a station changes record without going
+      // off the air first.
+      expect(const BroadcasterState(stream: stream, tracks: [track], isLive: true).canGoLive, isTrue);
       expect(const BroadcasterState(stream: stream, tracks: [track], starting: true).canGoLive, isFalse);
     });
 
@@ -418,5 +450,107 @@ void main() {
       expect(cleared.broadcastingTrack, isNull);
       expect(cleared.errorMessage, isNull);
     });
+  });
+
+  group('changing track on air', () {
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'swaps the source without closing the connection',
+      setUp: () => transport.simulateRunning(),
+      // Stopping and restarting would flip the stream offline and end every
+      // listener's response: the audience would be dropped by a change of
+      // record. The open request is reused instead.
+      build: build,
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      // The full sequence, not a prefix: a prefix would also pass if the
+      // switch had thrown and the catch had stopped the broadcast. The
+      // trailing stop is close()'s teardown.
+      verify: (_) => expect(transport.calls, ['switchSource', 'stop']),
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'stays on air, with the new track',
+      setUp: () => transport.simulateRunning(),
+      build: build,
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isTrue)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', otherTrack),
+      ],
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a track that cannot be fetched does not take the station off air',
+      // The transport was never asked for anything: the running broadcast is
+      // intact, and ending it over a failed download would be a worse outcome
+      // than the error itself.
+      setUp: () => transport.simulateRunning(),
+      build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),
+      seed: () => const BroadcasterState(
+        stream: stream,
+        tracks: [track, otherTrack],
+        isLive: true,
+        broadcastingTrack: track,
+      ),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(otherTrack)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isTrue)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', track)
+            .having((s) => s.errorMessage, 'errorMessage', contains('404')),
+      ],
+      verify: (_) => expect(transport.calls, ['stop']), // close() only
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a failed first broadcast stops claiming an antenna it never held',
+      build: () => build(audioClient: MockClient((_) async => http.Response('nope', 404))),
+      seed: () => const BroadcasterState(stream: stream, tracks: [track]),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
+      expect: () => [
+        isA<BroadcasterState>().having((s) => s.starting, 'starting', isTrue),
+        isA<BroadcasterState>()
+            .having((s) => s.isLive, 'isLive', isFalse)
+            .having((s) => s.broadcastingTrack, 'broadcastingTrack', isNull),
+      ],
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a second tap in the same frame is ignored',
+      // Bloc runs handlers concurrently by default: without the guard the
+      // second run fails and its catch cuts the broadcast the first started.
+      build: build,
+      seed: () => const BroadcasterState(stream: stream, tracks: [track, otherTrack]),
+      act: (bloc) {
+        bloc.add(const BroadcasterGoLiveRequested(track));
+        bloc.add(const BroadcasterGoLiveRequested(otherTrack));
+      },
+      verify: (_) {
+        expect(transport.calls.where((c) => c.startsWith('start')), hasLength(1));
+        expect(transport.calls, isNot(contains('switchSource')));
+      },
+    );
+
+    blocTest<BroadcasterBloc, BroadcasterState>(
+      'a first broadcast still starts without a stop',
+      build: build,
+      seed: () => const BroadcasterState(stream: stream, tracks: [track]),
+      act: (bloc) => bloc.add(const BroadcasterGoLiveRequested(track)),
+      verify: (_) => expect(transport.calls, ['start(http://api.test/api/v1/streams/s1/publish)', 'stop']),
+    );
   });
 }
