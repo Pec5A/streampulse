@@ -7,12 +7,17 @@ fois l'envoi termine — le flux ne passe jamais "en direct" pendant qu'on
 diffuse, et les auditeurs recoivent 404. Le WebSocket traverse le proxy sans
 mise en tampon.
 
-    ./scripts/diffuser.py [duree_en_secondes]
-    API=http://localhost:8080 ./scripts/diffuser.py   # contre le local
+Vise le **local** par defaut : le script cree un compte et un flux a chaque
+execution, et les laisser s'accumuler dans la base de production pollue la
+liste des flux que l'equipe utilise pour ses propres essais.
+
+    ./scripts/diffuser.py [duree_en_secondes]           # local
+    API=https://streampulse-api-j46j.onrender.com \
+      ./scripts/diffuser.py                            # production, explicite
 """
 import asyncio, json, os, sys, threading, time, urllib.request, urllib.error
 
-API = os.environ.get("API", "https://streampulse-api-j46j.onrender.com")
+API = os.environ.get("API", "http://localhost:8080")
 WS = API.replace("https://", "wss://").replace("http://", "ws://")
 DUREE = int(sys.argv[1]) if len(sys.argv) > 1 else 120
 DEBIT = int(os.environ.get("DEBIT", 16000))
@@ -51,6 +56,8 @@ async def main():
                  "password": "MotDePasse123!"})["token"]
     sid = api("/api/v1/streams", {"title": "Demo soutenance", "description": "live"}, token)["id"]
     print(f"cible : {API}\nflux  : {sid}", flush=True)
+    if "localhost" not in API and "127.0.0.1" not in API:
+        print("  /!\\  cible de production : ce flux et ce compte y restent", flush=True)
 
     paquet = DEBIT // 10
     recu = [0] * AUDITEURS
