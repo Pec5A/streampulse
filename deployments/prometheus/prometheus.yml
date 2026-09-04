@@ -6,25 +6,29 @@ rule_files:
   - alerts.yml
 
 scrape_configs:
-  - job_name: streampulse-api
-    static_configs:
-      - targets: ["api:8080"]
-    metrics_path: /metrics
-    # /metrics is no longer open: it publishes the route table, per-route
-    # volumes, latency distributions and the process memory profile. The API
-    # refuses to start outside development without this token, so the scraper
-    # has to present it — including here, where the point is that the local
-    # stack runs the same path as production.
-    #
-    # The value is literal on purpose: Prometheus does NOT expand environment
-    # variables in its configuration, so a "${METRICS_TOKEN}" here would be
-    # sent verbatim as the token and every scrape would 404 — silently, since
-    # a failing scrape only shows up as a gap in the graphs. It matches the
-    # compose default and is a local development value, never a real secret.
-    # A deployment supplies its own through `credentials_file`.
-    authorization:
-      type: Bearer
-      credentials: local-scrape-token
+  # Le job local est desactive : toute l'equipe travaille contre le backend
+  # deploye, et scraper les deux superposait deux sources sous le meme nom de
+  # metrique dans chaque panneau. Le decommenter pour superviser une API
+  # lancee en local.
+  # - job_name: streampulse-api
+  #   static_configs:
+  #     - targets: ["api:8080"]
+  #   metrics_path: /metrics
+  #   # /metrics is no longer open: it publishes the route table, per-route
+  #   # volumes, latency distributions and the process memory profile. The API
+  #   # refuses to start outside development without this token, so the scraper
+  #   # has to present it — including here, where the point is that the local
+  #   # stack runs the same path as production.
+  #   #
+  #   # The value is literal on purpose: Prometheus does NOT expand environment
+  #   # variables in its configuration, so a "${METRICS_TOKEN}" here would be
+  #   # sent verbatim as the token and every scrape would 404 — silently, since
+  #   # a failing scrape only shows up as a gap in the graphs. It matches the
+  #   # compose default and is a local development value, never a real secret.
+  #   # A deployment supplies its own through `credentials_file`.
+  #   authorization:
+  #     type: Bearer
+  #     credentials: local-scrape-token
 
   # Le backend deploye sur Render. Meme metriques, memes dashboards : les
   # panneaux ne filtrent pas sur `job`, donc ils affichent les deux sources
@@ -45,8 +49,13 @@ scrape_configs:
     authorization:
       type: Bearer
       credentials_file: /etc/prometheus/prod-token
-    # Le plan gratuit de Render endort le service apres inactivite, et le
-    # reveil prend plusieurs secondes. Un timeout court transformerait chaque
-    # reveil en scrape perdu.
-    scrape_timeout: 30s
-    scrape_interval: 30s
+    # 15s et non 30s : `active_streams` et `active_listeners` sont des jauges,
+    # donc echantillonnees. A 30s d'intervalle, un auditeur qui ecoute 20s
+    # peut passer entierement entre deux scrapes et n'apparaitre nulle part —
+    # ce qui, en demonstration, ressemble a une metrique cassee.
+    #
+    # Le plan gratuit de Render endort le service apres inactivite, mais un
+    # scrape toutes les 15s le maintient eveille : le reveil a froid ne se
+    # produit qu'au tout premier, d'ou un timeout large malgre l'intervalle.
+    scrape_interval: 15s
+    scrape_timeout: 10s
